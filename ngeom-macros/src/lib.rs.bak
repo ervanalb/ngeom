@@ -1,0 +1,146 @@
+pub trait Dual {
+    type Dual: Dual<Dual = Self>;
+}
+
+pub mod pga2d {
+    use crate::Dual;
+    use core::ops::BitAnd;
+
+    pub struct Vector {
+        _x: f32,
+        _y: f32,
+        _z: f32,
+    }
+
+    pub struct Bivector {
+        _x: f32,
+        _y: f32,
+        _z: f32,
+    }
+
+    pub struct Pseudoscalar {
+        _x: f32,
+    }
+
+    impl BitAnd<Bivector> for Bivector {
+        type Output = Vector;
+
+        fn bitand(self, _x: Bivector) -> Vector {
+            Vector {
+                _x: 0.,
+                _y: 0.,
+                _z: 0.,
+            }
+        }
+    }
+
+    impl Dual for Vector {
+        type Dual = Bivector;
+    }
+
+    impl Dual for Bivector {
+        type Dual = Vector;
+    }
+}
+pub mod pga3d {
+    use crate::Dual;
+    use core::ops::BitAnd;
+
+    pub struct Vector {
+        _x: f32,
+        _y: f32,
+        _z: f32,
+        _w: f32,
+    }
+
+    pub struct Bivector {
+        _x: f32,
+        _y: f32,
+        _z: f32,
+        _a: f32,
+        _b: f32,
+        _c: f32,
+    }
+
+    pub struct Trivector {
+        _x: f32,
+        _y: f32,
+        _z: f32,
+        _w: f32,
+    }
+
+    pub struct Pseudoscalar {
+        _x: f32,
+    }
+
+    impl BitAnd<Trivector> for Trivector {
+        type Output = Bivector;
+
+        fn bitand(self, _x: Trivector) -> Bivector {
+            Bivector {
+                _x: 0.,
+                _y: 0.,
+                _z: 0.,
+                _a: 0.,
+                _b: 0.,
+                _c: 0.,
+            }
+        }
+    }
+
+    impl Dual for Vector {
+        type Dual = Trivector;
+    }
+
+    impl Dual for Bivector {
+        type Dual = Bivector;
+    }
+
+    impl Dual for Trivector {
+        type Dual = Vector;
+    }
+}
+
+pub fn vee_3d(
+    a: <pga3d::Vector as Dual>::Dual,
+    b: <pga3d::Vector as Dual>::Dual,
+) -> <pga3d::Bivector as Dual>::Dual {
+    a & b
+}
+
+pub fn vee_2d(
+    a: <pga2d::Vector as Dual>::Dual,
+    b: <pga2d::Vector as Dual>::Dual,
+) -> <pga2d::Bivector as Dual>::Dual {
+    a & b
+}
+
+pub trait PGA {
+    type Point: BitAnd<Self::Point, Output = Self::Line>;
+    type Line;
+}
+
+struct PGA3D;
+struct PGA2D;
+
+impl PGA for PGA3D {
+    type Point = pga3d::Trivector;
+    type Line = pga3d::Bivector;
+}
+
+impl PGA for PGA2D {
+    type Point = pga2d::Bivector;
+    type Line = pga2d::Vector;
+}
+
+use core::ops::BitAnd;
+pub fn vee<A: PGA>(a: A::Point, b: A::Point) -> A::Line {
+    a & b
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn test_algebra() {}
+}
