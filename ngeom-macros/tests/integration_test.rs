@@ -10,6 +10,9 @@ pub trait ScalarRing:
 {
     fn zero() -> Self;
     fn one() -> Self;
+    fn two() -> Self {
+        Self::one() + Self::one()
+    }
 }
 
 pub trait Reverse {

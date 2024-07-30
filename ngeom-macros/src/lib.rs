@@ -1,10 +1,9 @@
 extern crate proc_macro;
 use core::cmp::Ordering;
-use core::iter::Sum;
-use core::ops::{Add, Mul};
+use core::ops::{AddAssign, Mul};
 use nalgebra::DVector;
 use proc_macro2::Span;
-use proc_macro2::TokenStream;
+use proc_macro2::{TokenStream, TokenTree};
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream, Result};
 use syn::punctuated::Punctuated;
@@ -55,7 +54,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     impl ToTokens for Symbol {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            self.0.to_tokens(tokens)
+            let Symbol(self_ident) = self;
+            self_ident.to_tokens(tokens);
         }
     }
 
@@ -66,27 +66,32 @@ fn gen_algebra2(input: Input) -> TokenStream {
     }
 
     impl Ord for SymbolicProdExpr {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.1.cmp(&other.1).then_with(|| self.0.cmp(&other.0))
+        fn cmp(&self, SymbolicProdExpr(other_coef, other_symbols): &Self) -> Ordering {
+            let SymbolicProdExpr(self_coef, self_symbols) = self;
+            self_symbols
+                .cmp(&other_symbols)
+                .then_with(|| self_coef.cmp(&other_coef))
         }
     }
 
     impl Mul<SymbolicProdExpr> for SymbolicProdExpr {
         type Output = SymbolicProdExpr;
-        fn mul(mut self, mut r: SymbolicProdExpr) -> SymbolicProdExpr {
-            self.0 *= r.0;
-            self.1.append(&mut r.1);
+        fn mul(mut self, SymbolicProdExpr(r_coef, mut r_symbols): Self) -> SymbolicProdExpr {
+            let SymbolicProdExpr(l_coef, l_symbols) = &mut self;
+            *l_coef *= r_coef;
+            l_symbols.append(&mut r_symbols);
             self
         }
     }
 
     impl SymbolicProdExpr {
         fn simplify(mut self) -> Self {
+            let SymbolicProdExpr(coef, symbols) = &mut self;
             // Sort expression
-            if self.0 == 0 {
-                self.1.clear();
+            if *coef == 0 {
+                symbols.clear();
             } else {
-                self.1.sort();
+                symbols.sort();
             }
             self
         }
@@ -94,10 +99,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     impl ToTokens for SymbolicSumExpr {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            if self.0.len() == 0 {
-                tokens.append_all(quote! { ScalarRing::zero() });
+            let SymbolicSumExpr(terms) = self;
+            if terms.len() == 0 {
+                tokens.append_all(quote! { T::zero() });
             } else {
-                for (count, prod_expr) in self.0.iter().enumerate() {
+                for (count, prod_expr) in terms.iter().enumerate() {
                     let SymbolicProdExpr(coef, prod_terms) = prod_expr;
                     let coef = *coef;
 
@@ -108,22 +114,29 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     } else {
                         tokens.append_all(quote! { - });
                     }
+                    let coef = coef.abs();
 
                     if prod_terms.len() == 0 {
                         // If there are no symbols in the product, then this is a scalar
                         if coef == 0 {
-                            tokens.append_all(quote! { ScalarRing::zero() });
-                        } else if coef.abs() == 1 {
+                            tokens.append_all(quote! { T::zero() });
+                        } else if coef == 1 {
                             tokens.append_all(quote! {
-                                ScalarRing::one()
+                                T::one()
                             });
                         } else {
                             panic!("Scalar was not 0, -1 or 1");
                         }
                     } else {
                         // There are symbols in the product
-                        if coef.abs() != 1 {
-                            panic!("Coefficient on symbols was not -1 or 1");
+                        if coef == 0 {
+                            tokens.append_all(quote! { T::zero() * });
+                        } else if coef == 1 {
+                            // No token needed if coefficient is unity
+                        } else if coef == 2 {
+                            tokens.append_all(quote! { T::two() * });
+                        } else {
+                            panic!("No representation for large coefficient {}", coef);
                         }
                         for (sym_count, sym) in prod_terms.iter().enumerate() {
                             if sym_count > 0 {
@@ -144,18 +157,20 @@ fn gen_algebra2(input: Input) -> TokenStream {
     //}
 
     impl SymbolicSumExpr {
-        fn simplify(mut self) -> Self {
+        fn simplify(self) -> Self {
+            let SymbolicSumExpr(terms) = self;
+
             // Simplify all products
-            self.0 = self.0.into_iter().map(|prod| prod.simplify()).collect();
+            let mut terms: Vec<_> = terms.into_iter().map(|prod| prod.simplify()).collect();
 
             // Sort expression by symbolic values
-            self.0.sort();
+            terms.sort();
 
             // Combine adjacent terms whose symbolic parts are equal
             let mut new_expression = vec![];
             let mut prev_coef = 0;
             let mut prev_symbols = vec![];
-            for SymbolicProdExpr(coef, symbols) in self.0.into_iter() {
+            for SymbolicProdExpr(coef, symbols) in terms.into_iter() {
                 if prev_symbols == symbols {
                     prev_coef += coef;
                 } else {
@@ -166,32 +181,34 @@ fn gen_algebra2(input: Input) -> TokenStream {
             }
             new_expression.push(SymbolicProdExpr(prev_coef, prev_symbols));
 
-            self.0 = new_expression;
+            let mut terms = new_expression;
 
             // Remove all products with coefficient = 0
-            self.0.retain(|prod| prod.0 != 0);
+            terms.retain(|SymbolicProdExpr(coef, _)| *coef != 0);
 
-            self
+            SymbolicSumExpr(terms)
         }
     }
 
-    //impl Add<SymbolicSumExpr> for SymbolicSumExpr {
-    //    type Output = SymbolicSumExpr;
-    //    fn add(mut self, mut r: SymbolicSumExpr) -> SymbolicSumExpr {
-    //        self.0.append(&mut r.0);
-    //        self
-    //    }
-    //}
+    impl AddAssign<SymbolicProdExpr> for SymbolicSumExpr {
+        fn add_assign(&mut self, r_term: SymbolicProdExpr) {
+            let SymbolicSumExpr(l_terms) = self;
+            l_terms.push(r_term);
+        }
+    }
 
-    impl Mul<SymbolicSumExpr> for SymbolicSumExpr {
+    impl AddAssign<SymbolicSumExpr> for SymbolicSumExpr {
+        fn add_assign(&mut self, SymbolicSumExpr(mut r_terms): SymbolicSumExpr) {
+            let SymbolicSumExpr(l_terms) = self;
+            l_terms.append(&mut r_terms);
+        }
+    }
+
+    impl Mul<SymbolicProdExpr> for SymbolicSumExpr {
         type Output = SymbolicSumExpr;
-        fn mul(self, r: SymbolicSumExpr) -> SymbolicSumExpr {
+        fn mul(self, r: SymbolicProdExpr) -> SymbolicSumExpr {
             let SymbolicSumExpr(l) = self;
-            SymbolicSumExpr(
-                l.iter()
-                    .flat_map(|lp| r.0.iter().map(|rp| lp.clone() * rp.clone()))
-                    .collect(),
-            )
+            SymbolicSumExpr(l.iter().map(|lp| lp.clone() * r.clone()).collect())
         }
     }
 
@@ -278,12 +295,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     let basis_element_count = basis.len();
 
-    fn coefficient_symbol(var: &str, basis: &[usize]) -> Symbol {
+    fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
         let basis_pretty: String = basis.iter().map(|e| format!("{}", e)).collect();
-        Symbol(Ident::new(
-            &format!("{}{}", var, basis_pretty),
-            Span::call_site(),
-        ))
+        Ident::new(&format!("{}{}", var, basis_pretty), Span::call_site())
     }
 
     // We will represent a multivector as an array of coefficients on the basis elements.
@@ -458,56 +472,85 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 .filter_map(|(j, is_selected)| is_selected.then_some(j))
             {
                 let (coef, result_basis_ix) = product(i, j);
-                if coef != 0 {
-                    result[result_basis_ix].0.push(SymbolicProdExpr(
-                        coef,
-                        vec![
-                            coefficient_symbol("a", &basis[i]),
-                            coefficient_symbol("b", &basis[j]),
-                        ],
-                    ));
-                }
+
+                result[result_basis_ix] += SymbolicProdExpr(
+                    coef,
+                    vec![
+                        Symbol(coefficient_ident("a", &basis[i])),
+                        Symbol(coefficient_ident("b", &basis[j])),
+                    ],
+                );
             }
         }
 
         result.into_iter().map(|expr| expr.simplify()).collect()
     }
 
-    //fn simplify_symbolic_product(
-    //    mut product: Vec<Vec<(isize, usize, usize)>>,
-    //) -> Vec<Vec<(isize, usize, usize)>> {
-    //    // Simpify each expression by combining repeated entries
-    //    for expression in product.iter_mut() {
-    //        // Sort expression so duplicates are adjacent
-    //        expression.sort_by_key(|&(_, i, j)| (i, j));
+    // Function to generate a double product of two objects, e.g. sandwich product, project,
+    // reflect, etc.
+    // The result will be a list of symbolic expressions,
+    // one for each coefficient value in the resultant multivector.
+    // The resulting code will implement the product in the following order:
+    // (B PRODUCT1 A) PRODUCT2 B
+    fn generate_symbolic_double_product<
+        F1: Fn(usize, usize) -> (isize, usize),
+        F2: Fn(usize, usize) -> (isize, usize),
+    >(
+        basis: &Vec<Vec<usize>>,
+        select_components_a: &DVector<bool>,
+        select_components_b: &DVector<bool>,
+        product_1: F1,
+        product_2: F2,
+    ) -> Vec<SymbolicSumExpr> {
+        // Generate the first intermediate product B PRODUCT1 A
+        // where i maps to components of B, and j maps to components of A
+        let mut intermediate_result: Vec<SymbolicSumExpr> =
+            vec![Default::default(); select_components_a.len()];
+        for i in select_components_b
+            .iter()
+            .enumerate()
+            .filter_map(|(i, is_selected)| is_selected.then_some(i))
+        {
+            for j in select_components_a
+                .iter()
+                .enumerate()
+                .filter_map(|(j, is_selected)| is_selected.then_some(j))
+            {
+                let (coef, result_basis_ix) = product_1(i, j);
+                intermediate_result[result_basis_ix] += SymbolicProdExpr(
+                    coef,
+                    vec![
+                        Symbol(coefficient_ident("b", &basis[i])),
+                        Symbol(coefficient_ident("a", &basis[j])),
+                    ],
+                );
+            }
+        }
+        let intermediate_result: Vec<_> = intermediate_result
+            .into_iter()
+            .map(|expr| expr.simplify())
+            .collect();
 
-    //        // Combine duplicates and remove any with coefficient=0
-    //        let mut new_expression = vec![];
-    //        let mut prev_ij = None;
-    //        let mut prev_coef = 0;
-    //        for &(coef, i, j) in expression.iter() {
-    //            if Some((i, j)) == prev_ij {
-    //                prev_coef += coef;
-    //            } else {
-    //                if let Some((prev_i, prev_j)) = prev_ij {
-    //                    if prev_coef != 0 {
-    //                        new_expression.push((prev_coef, prev_i, prev_j));
-    //                    }
-    //                }
-    //                prev_coef = coef;
-    //                prev_ij = Some((i, j));
-    //            }
-    //        }
-    //        if let Some((prev_i, prev_j)) = prev_ij {
-    //            if prev_coef != 0 {
-    //                new_expression.push((prev_coef, prev_i, prev_j));
-    //            }
-    //        }
+        // Generate the final product (B PRODUCT1 A) PRODUCT2 B
+        // where i maps to components of the intermediate result B PRODUCT1 A
+        // and j maps to components of B.
+        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+        for (i, intermediate_term) in intermediate_result.iter().enumerate() {
+            for j in select_components_b
+                .iter()
+                .enumerate()
+                .filter_map(|(j, is_selected)| is_selected.then_some(j))
+            {
+                let (coef, result_basis_ix) = product_2(i, j);
+                let new_term =
+                    SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("b", &basis[j]))]);
+                let result_term = intermediate_term.clone() * new_term;
+                result[result_basis_ix] += result_term;
+            }
+        }
 
-    //        *expression = new_expression;
-    //    }
-    //    product
-    //}
+        result.into_iter().map(|expr| expr.simplify()).collect()
+    }
 
     fn gen_binary_operator<F: Fn(&DVector<bool>, &DVector<bool>) -> Vec<SymbolicSumExpr>>(
         basis: &Vec<Vec<usize>>,
@@ -531,7 +574,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
                 let select_output_components = DVector::from_iterator(
                     expressions.len(),
-                    expressions.iter().map(|e| e.0.len() != 0),
+                    expressions.iter().map(|SymbolicSumExpr(e)| e.len() != 0),
                 );
                 let output_object = objects.iter().find(|o| {
                     o.select_components
@@ -569,90 +612,56 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let rhs_type_name = &rhs_obj.type_name();
                 let lhs_type_name = &lhs_obj.type_name();
 
-                //let code_for_expression = |expression: &Vec<(isize, usize, usize)>| -> TokenStream {
-                //    if expression.len() == 0 {
-                //        return quote! { T::zero() };
-                //    }
-                //    expression
-                //        .iter()
-                //        .enumerate()
-                //        .map(|(count, &(coef, i, j))| {
-                //            let i_expr = if lhs_obj.is_scalar {
-                //                assert!(i == 0);
-                //                quote! {
-                //                    self
-                //                }
-                //            } else {
-                //                let ident = coefficient_identifier("a", &basis[i]);
-                //                quote! {
-                //                    self.#ident
-                //                }
-                //            };
-                //            let j_expr = if rhs_obj.is_scalar {
-                //                assert!(j == 0);
-                //                quote! {
-                //                    r
-                //                }
-                //            } else {
-                //                let ident = coefficient_identifier("a", &basis[j]);
-                //                quote! {
-                //                    r.#ident
-                //                }
-                //            };
-                //            let plus = if count == 0 {
-                //                quote! {}
-                //            } else {
-                //                quote! {+}
-                //            };
-                //            let minus = quote! {-};
-                //            if coef == 1 {
-                //                quote! { #plus #i_expr * #j_expr}
-                //            } else if coef == -1 {
-                //                quote! { #minus #i_expr * #j_expr}
-                //            } else if coef > 0 {
-                //                panic!("Non-unity coefficient");
-                //                //let coef_lit = LitInt::new(&format!("{}", coef), Span::call_site());
-                //                //quote! { #plus #coef_lit  #i_expr * #j_expr}
-                //            } else if coef < 0 {
-                //                panic!("Non-unity coefficient");
-                //                //let coef_lit =
-                //                //    LitInt::new(&format!("{}", -coef), Span::call_site());
-                //                //quote! { #minus #coef_lit  self.#i_expr * r.#j_expr}
-                //            } else {
-                //                panic!("Bad coefficient (zero?)");
-                //            }
-                //        })
-                //        .collect()
-                //};
+                // Convert the expression to token trees
+                let expressions: Vec<TokenStream> = expressions
+                    .into_iter()
+                    .map(|expr| quote! { #expr })
+                    .collect();
 
-                let destructure = |oldvar, newvar, obj: &Object| {
-                    if obj.is_scalar {
-                        let newvar_ident = coefficient_symbol(newvar, &[]);
-                        quote! { let #newvar_ident = #oldvar; }
-                    } else {
-                        let obj_type_name = obj.type_name_colons();
-                        let obj_field_list: TokenStream = basis
-                            .iter()
-                            .zip(obj.select_components.iter())
-                            .filter_map(|(b, is_selected)| {
-                                is_selected.then(|| {
-                                    let field = coefficient_symbol("a", b);
-                                    let specific_newvar = coefficient_symbol(newvar, b);
-                                    if field == specific_newvar {
-                                        quote! { #field, }
-                                    } else {
-                                        quote! { #field: #specific_newvar, }
+                // Find and replace temporary a### & b### identifier with self.a### & r.a###
+                let expressions: Vec<TokenStream> = expressions
+                    .into_iter()
+                    .map(|expr| {
+                        expr.into_iter()
+                            .flat_map(|tt| {
+                                match &tt {
+                                    TokenTree::Ident(ident) => {
+                                        basis
+                                            .iter()
+                                            .find_map(move |b| {
+                                                if ident == &coefficient_ident("a", b) {
+                                                    Some(if lhs_obj.is_scalar {
+                                                        assert!(b.len() == 0);
+                                                        quote! { self }
+                                                    } else {
+                                                        // All fields are in the format "a###"
+                                                        // so we can re-use the temporary identifier
+                                                        let new_ident = ident;
+                                                        quote! { self.#new_ident }
+                                                    })
+                                                } else if ident == &coefficient_ident("b", b) {
+                                                    Some(if rhs_obj.is_scalar {
+                                                        assert!(b.len() == 0);
+                                                        quote! { r }
+                                                    } else {
+                                                        // All fields are in the format "a###"
+                                                        // so we need to convert b### to a###
+                                                        let new_ident = coefficient_ident("a", b);
+                                                        quote! { r.#new_ident }
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .unwrap_or(quote! { #ident })
                                     }
-                                })
+                                    other => quote! { #other },
+                                }
+                                .into_iter()
                             })
-                            .collect();
-
-                        quote! { let #obj_type_name { #obj_field_list } = #oldvar; }
-                    }
-                };
-
-                let destructure_self = destructure(quote! { self }, "a", lhs_obj);
-                let destructure_rhs = destructure(quote! { r }, "b", rhs_obj);
+                            .collect()
+                    })
+                    .collect();
 
                 let return_expr = if output_object.is_scalar {
                     let expr = &expressions[0];
@@ -667,7 +676,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             if !is_selected {
                                 return quote! {};
                             }
-                            let field = coefficient_symbol("a", b);
+                            let field = coefficient_ident("a", b);
                             quote! { #field: #expr, }
                         })
                         .collect();
@@ -689,8 +698,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         #output_type
 
                         fn #op_fn (self, r: #rhs_type_name) -> #output_type_name {
-                            #destructure_self
-                            #destructure_rhs
                             #return_expr
                         }
                     }
@@ -712,7 +719,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         .zip(obj.select_components.iter())
                         .filter_map(|(b, is_selected)| {
                             is_selected.then(|| {
-                                let identifier = coefficient_symbol("a", b);
+                                let identifier = coefficient_ident("a", b);
                                 quote! {
                                     #identifier: T,
                                 }
@@ -843,32 +850,48 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
             let op_trait = quote! { Transform };
             let op_fn = Ident::new("transform", Span::call_site());
-            let sandwich_product = |i: usize, j: usize| {
-                // Note: j is the bread of the sandwich
+
+            let sandwich_product_1 = |i: usize, j: usize| {
+                // Compute first half of B * A * ~B
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of this intermediate result
+                // with ~B
+
+                multiplication_table[i][j]
+            };
+
+            let sandwich_product_2 = |i: usize, j: usize| {
+                // Compute second half of B * A * ~B
+                // In part 1, we computed the intermediate result B * A which maps to i here.
+                // j maps to B.
                 let reverse_coef = |ix: usize| match (basis[ix].len() / 2) % 2 {
                     0 => 1,
                     1 => -1,
                     _ => panic!("Expected parity to be 0 or 1"),
                 };
 
-                // TODO this is wrong! it does not include cross terms
-                let (coef_1, ix_int) = multiplication_table[j][i];
-                let (coef_2, ix_result) = multiplication_table[ix_int][j];
-                let coef = coef_1 * coef_2 * reverse_coef(j);
-                assert!(ix_result == i);
+                let (coef, ix_result) = multiplication_table[i][j];
 
-                (coef, i)
+                (coef * reverse_coef(j), ix_result)
             };
-            /*let transform_code = gen_binary_operator(
+            let transform_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(a, b, sandwich_product),
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        sandwich_product_1,
+                        sandwich_product_2,
+                    )
+                },
                 true,
-            );*/
- // XXX
+            );
+            // XXX
 
             quote! {
                 // ===========================================================================
@@ -879,6 +902,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #dot_product_code
                 #geometric_product_code
                 #commutator_product_code
+                #transform_code
             }
         })
         .collect();
