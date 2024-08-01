@@ -386,6 +386,147 @@ fn gen_algebra2(input: Input) -> TokenStream {
         });
     }
 
+    fn gen_unary_operator<F: Fn(usize) -> (isize, usize)>(
+        basis: &Vec<Vec<usize>>,
+        objects: &[Object],
+        op_trait: TokenStream,
+        op_fn: Ident,
+        obj: &Object,
+        op: F,
+        output_self: bool,
+    ) -> TokenStream {
+        // Generate the vec of symbolic expressions (one for each basis element coefficient)
+        // that computes the given unary operator
+        let mut expressions: Vec<SymbolicSumExpr> =
+            vec![Default::default(); obj.select_components.len()];
+        for i in obj
+            .select_components
+            .iter()
+            .enumerate()
+            .filter_map(|(i, is_selected)| is_selected.then_some(i))
+        {
+            let (coef, result_basis_ix) = op(i);
+
+            expressions[result_basis_ix] +=
+                SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("a", &basis[i]))]);
+        }
+
+        let expressions: Vec<_> = expressions
+            .into_iter()
+            .map(|expr| expr.simplify())
+            .collect();
+
+        // Figure out what the type of the output is
+        let select_output_components = DVector::from_iterator(
+            expressions.len(),
+            expressions.iter().map(|SymbolicSumExpr(e)| e.len() != 0),
+        );
+        let output_object = objects.iter().find(|o| {
+            o.select_components
+                .iter()
+                .zip(select_output_components.into_iter())
+                .find(|&(obj_c, &out_c)| out_c && !obj_c)
+                .is_none()
+        });
+
+        let Some(output_object) = output_object else {
+            // No output object matches the result we got,
+            // so don't generate any code
+            return quote! {};
+        };
+
+        if output_object.is_scalar && expressions[0].0.len() == 0 {
+            // This operation unconditionally returns 0,
+            // so invoking it is probably a type error--
+            // do not generate code for it
+            return quote! {};
+        }
+
+        let output_type_name = &output_object.type_name_colons();
+        let type_name = &obj.type_name();
+
+        // Convert the expression to token trees
+        let expressions: Vec<TokenStream> = expressions
+            .into_iter()
+            .map(|expr| quote! { #expr })
+            .collect();
+
+        // Find and replace temporary a### & b### identifier with self.a### & r.a###
+        let expressions: Vec<TokenStream> = expressions
+            .into_iter()
+            .map(|expr| {
+                expr.into_iter()
+                    .flat_map(|tt| {
+                        match &tt {
+                            TokenTree::Ident(ident) => {
+                                basis
+                                    .iter()
+                                    .find_map(move |b| {
+                                        if ident == &coefficient_ident("a", b) {
+                                            Some(if obj.is_scalar {
+                                                assert!(b.len() == 0);
+                                                quote! { self }
+                                            } else {
+                                                // All fields are in the format "a###"
+                                                // so we can re-use the temporary identifier
+                                                let new_ident = ident;
+                                                quote! { self.#new_ident }
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .unwrap_or(quote! { #ident })
+                            }
+                            other => quote! { #other },
+                        }
+                        .into_iter()
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let return_expr = if output_object.is_scalar {
+            let expr = &expressions[0];
+            quote! { #expr }
+        } else {
+            let output_fields: TokenStream = output_object
+                .select_components
+                .iter()
+                .zip(basis.iter().zip(expressions.iter()))
+                .enumerate()
+                .map(|(_i, (is_selected, (b, expr)))| {
+                    if !is_selected {
+                        return quote! {};
+                    }
+                    let field = coefficient_ident("a", b);
+                    quote! { #field: #expr, }
+                })
+                .collect();
+            quote! {
+                #output_type_name {
+                    #output_fields
+                }
+            }
+        };
+
+        let output_type = if output_self {
+            quote! {}
+        } else {
+            quote! { type Output = #output_type_name; }
+        };
+
+        quote! {
+            impl < T: ScalarRing > #op_trait for #type_name {
+                #output_type
+
+                fn #op_fn (self) -> #output_type_name {
+                    #return_expr
+                }
+            }
+        }
+    }
+
     // Generate multiplication table for the basis elements
     // Each entry is a tuple of the (coefficient, basis_index)
     // e.g. (1, 0) means the multiplication result is 1 * scalar = 1
@@ -552,6 +693,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
         result.into_iter().map(|expr| expr.simplify()).collect()
     }
 
+    // TODO: Inline op
     fn gen_binary_operator<F: Fn(&DVector<bool>, &DVector<bool>) -> Vec<SymbolicSumExpr>>(
         basis: &Vec<Vec<usize>>,
         objects: &[Object],
@@ -728,7 +870,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         .collect();
                     let name = &obj.name;
                     quote! {
-                        struct #name <T: ScalarRing> {
+                        pub struct #name <T: ScalarRing> {
                             #struct_members
                         }
                     }
@@ -744,6 +886,31 @@ fn gen_algebra2(input: Input) -> TokenStream {
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
+            // Add a method A.reverse()
+            let op_trait = quote! { Reverse };
+            let op_fn = Ident::new("reverse", Span::call_site());
+            let reverse_f = |i: usize| {
+                let coef = match (basis[i].len() / 2) % 2 {
+                    0 => 1,
+                    1 => -1,
+                    _ => panic!("Expected parity to be 0 or 1"),
+                };
+                (coef, i)
+            };
+            let reverse_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, reverse_f, true);
+
+            // Add a method A.dual()
+            let op_trait = quote! { Dual };
+            let op_fn = Ident::new("dual", Span::call_site());
+            let dual_f = |i: usize| {
+                // We have set up our basis carefully to allow this
+                (1, basis.len() - i - 1)
+            };
+            let dual_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, dual_f, false);
+
+            // Overload ^ with the wedge product
             let op_trait = quote! { core::ops::BitXor };
             let op_fn = Ident::new("bitxor", Span::call_site());
             let wedge_product = |i: usize, j: usize| {
@@ -765,6 +932,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false,
             );
 
+            // Overload & with the vee product
             let op_trait = quote! { core::ops::BitAnd };
             let op_fn = Ident::new("bitand", Span::call_site());
             let vee_product = |i: usize, j: usize| {
@@ -790,6 +958,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false,
             );
 
+            // Overload | with the dot product
             let op_trait = quote! { core::ops::BitOr };
             let op_fn = Ident::new("bitor", Span::call_site());
             let dot_product = |i: usize, j: usize| {
@@ -812,6 +981,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false,
             );
 
+            // Overload * with the geometric product
             let op_trait = quote! { core::ops::Mul };
             let op_fn = Ident::new("mul", Span::call_site());
             let geometric_product = |i: usize, j: usize| multiplication_table[i][j];
@@ -825,6 +995,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false,
             );
 
+            // Add a method A.cross(B) which computes (A * B - B * A) / 2
             let op_trait = quote! { Commutator };
             let op_fn = Ident::new("cross", Span::call_site());
             let commutator_product = |i: usize, j: usize| {
@@ -848,10 +1019,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false,
             );
 
+            // Add a method A.transform(B) which computes B * A * ~B
             let op_trait = quote! { Transform };
             let op_fn = Ident::new("transform", Span::call_site());
-
-            let sandwich_product_1 = |i: usize, j: usize| {
+            let transform_product_1 = |i: usize, j: usize| {
                 // Compute first half of B * A * ~B
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of this intermediate result
@@ -859,8 +1030,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
                 multiplication_table[i][j]
             };
-
-            let sandwich_product_2 = |i: usize, j: usize| {
+            let transform_product_2 = |i: usize, j: usize| {
                 // Compute second half of B * A * ~B
                 // In part 1, we computed the intermediate result B * A which maps to i here.
                 // j maps to B.
@@ -885,23 +1055,106 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         &basis,
                         a,
                         b,
-                        sandwich_product_1,
-                        sandwich_product_2,
+                        transform_product_1,
+                        transform_product_2,
                     )
                 },
                 true,
             );
-            // XXX
+
+            // Add a method A.reflect(B) which computes B * A * B
+            let op_trait = quote! { Reflect };
+            let op_fn = Ident::new("reflect", Span::call_site());
+            let reflect_product_1 = |i: usize, j: usize| {
+                // Compute first half of B * A * B
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of this intermediate result
+                // with B
+
+                multiplication_table[i][j]
+            };
+            let reflect_product_2 = |i: usize, j: usize| {
+                // Compute second half of B * A * B
+                // In part 1, we computed the intermediate result B * A which maps to i here.
+                // j maps to B.
+                multiplication_table[i][j]
+            };
+            let reflect_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        reflect_product_1,
+                        reflect_product_2,
+                    )
+                },
+                true,
+            );
+
+            // Add a method A.project(B) which computes (B . A) * B
+            let op_trait = quote! { Project };
+            let op_fn = Ident::new("project", Span::call_site());
+            let project_product_1 = |i: usize, j: usize| {
+                // Compute first half of (B . A) * B
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of this intermediate result
+                // with B
+
+                let (coef, ix) = multiplication_table[i][j];
+                // Select grade |s - t|
+                let s = basis[i].len();
+                let t = basis[j].len();
+                let u = basis[ix].len();
+                let coef = if s + u == t || t + u == s { coef } else { 0 };
+                (coef, ix)
+            };
+            let project_product_2 = |i: usize, j: usize| {
+                // Compute second half of (B . A) * B
+                // In part 1, we computed the intermediate result B . A which maps to i here.
+                // j maps to B.
+                multiplication_table[i][j]
+            };
+            let project_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        project_product_1,
+                        project_product_2,
+                    )
+                },
+                true,
+            );
 
             quote! {
                 // ===========================================================================
                 // #name
                 // ===========================================================================
+
+                // TODO: NormSquared & Norm
+                // TODO: Add, Sub, Neg
+                // TODO: exp
+                #reverse_code
+                #dual_code
                 #wedge_product_code
                 #vee_product_code
                 #dot_product_code
                 #geometric_product_code
                 #commutator_product_code
+                #project_code
+                #reflect_code
                 #transform_code
             }
         })

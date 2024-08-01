@@ -15,6 +15,11 @@ pub trait ScalarRing:
     }
 }
 
+pub trait Sqrt {
+    type Output;
+    fn sqrt(self) -> Self::Output;
+}
+
 pub trait Reverse {
     fn reverse(self) -> Self;
 }
@@ -24,18 +29,23 @@ pub trait Dual {
     fn dual(self) -> Self::Output;
 }
 
-pub trait Conjugate {
-    fn conjugate(self) -> Self;
+pub trait NormSquared {
+    type Output;
+    fn bulk_norm_squared(self) -> Self::Output;
+    fn weight_norm_squared(self) -> Self::Output;
 }
 
-pub trait Norm {
-    type Output;
-    fn norm(self) -> Self::Output;
-}
+pub trait Norm: NormSquared<Output: Sqrt>
+where
+    Self: Sized,
+{
+    fn bulk_norm(self) -> <Self::Output as Sqrt>::Output {
+        self.bulk_norm_squared().sqrt()
+    }
 
-pub trait NormInfinite {
-    type Output;
-    fn inorm(self) -> Self::Output;
+    fn weight_norm(self) -> <Self::Output as Sqrt>::Output {
+        self.weight_norm_squared().sqrt()
+    }
 }
 
 pub trait Project<T> {
@@ -56,7 +66,7 @@ pub trait Commutator<T> {
 }
 
 mod pga4d {
-    use super::{Commutator, ScalarRing, Transform};
+    use super::{Commutator, Dual, Project, Reflect, Reverse, ScalarRing, Transform};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(1, 1, 1, 0);
