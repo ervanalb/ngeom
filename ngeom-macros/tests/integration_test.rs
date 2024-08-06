@@ -16,8 +16,105 @@ pub trait ScalarRing:
 }
 
 pub trait Sqrt {
-    type Output;
-    fn sqrt(self) -> Self::Output;
+    fn sqrt(self) -> Self;
+}
+
+pub trait Trig {
+    fn sin(self) -> Self;
+    fn cos(self) -> Self;
+    fn sinc(self) -> Self;
+}
+
+impl ScalarRing for f32 {
+    fn zero() -> f32 {
+        0.
+    }
+    fn one() -> f32 {
+        1.
+    }
+}
+
+impl Sqrt for f32 {
+    fn sqrt(self) -> f32 {
+        self.sqrt()
+    }
+}
+
+impl Trig for f32 {
+    fn sin(self) -> f32 {
+        self.sin()
+    }
+    fn cos(self) -> f32 {
+        self.cos()
+    }
+    fn sinc(self) -> f32 {
+        let self_adj = self.abs() + f32::EPSILON;
+        self_adj.sin() / self_adj
+    }
+}
+
+impl ScalarRing for f64 {
+    fn zero() -> f64 {
+        0.
+    }
+    fn one() -> f64 {
+        1.
+    }
+}
+
+impl Sqrt for f64 {
+    fn sqrt(self) -> f64 {
+        self.sqrt()
+    }
+}
+
+impl Trig for f64 {
+    fn sin(self) -> f64 {
+        self.sin()
+    }
+    fn cos(self) -> f64 {
+        self.cos()
+    }
+    fn sinc(self) -> f64 {
+        let self_adj = self.abs() + f64::EPSILON;
+        self_adj.sin() / self_adj
+    }
+}
+
+impl ScalarRing for i8 {
+    fn zero() -> i8 {
+        0
+    }
+    fn one() -> i8 {
+        1
+    }
+}
+
+impl ScalarRing for i16 {
+    fn zero() -> i16 {
+        0
+    }
+    fn one() -> i16 {
+        1
+    }
+}
+
+impl ScalarRing for i32 {
+    fn zero() -> i32 {
+        0
+    }
+    fn one() -> i32 {
+        1
+    }
+}
+
+impl ScalarRing for i64 {
+    fn zero() -> i64 {
+        0
+    }
+    fn one() -> i64 {
+        1
+    }
 }
 
 pub trait Reverse {
@@ -31,20 +128,28 @@ pub trait Dual {
 
 pub trait NormSquared {
     type Output;
-    fn bulk_norm_squared(self) -> Self::Output;
-    fn weight_norm_squared(self) -> Self::Output;
+    fn norm_squared(self) -> Self::Output;
+}
+
+pub trait INormSquared {
+    type Output;
+    fn inorm_squared(self) -> Self::Output;
 }
 
 pub trait Norm: NormSquared<Output: Sqrt>
 where
     Self: Sized,
 {
-    fn bulk_norm(self) -> <Self::Output as Sqrt>::Output {
-        self.bulk_norm_squared().sqrt()
+    fn norm(self) -> Self::Output {
+        self.norm_squared().sqrt()
     }
-
-    fn weight_norm(self) -> <Self::Output as Sqrt>::Output {
-        self.weight_norm_squared().sqrt()
+}
+pub trait INorm: INormSquared<Output: Sqrt>
+where
+    Self: Sized,
+{
+    fn inorm(self) -> Self::Output {
+        self.inorm_squared().sqrt()
     }
 }
 
@@ -65,11 +170,29 @@ pub trait Commutator<T> {
     fn cross(self, r: T) -> Self::Output;
 }
 
-mod pga4d {
-    use super::{Commutator, Dual, Project, Reflect, Reverse, ScalarRing, Transform};
+pub trait Exp {
+    type Output;
+    fn exp(self) -> Self::Output;
+}
+
+mod pga3d {
+    use super::{
+        Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
+        ScalarRing, Sqrt, Transform, Trig,
+    };
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(1, 1, 1, 0);
+
+    impl<T: ScalarRing + Sqrt + Trig> Exp for Bivector<T> {
+        type Output = Even<T>;
+        fn exp(self) -> Even<T> {
+            // This formula works because a normalized bivector squares to -1
+            // allowing us to treat it like the imaginary unit
+            let theta = self.norm();
+            self * theta.sinc() + theta.cos()
+        }
+    }
 }
 
 #[test]
