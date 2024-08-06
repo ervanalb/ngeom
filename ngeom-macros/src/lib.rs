@@ -133,7 +133,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         } else if coef == 1 {
                             // No token needed if coefficient is unity
                         } else if coef == 2 {
-                            tokens.append_all(quote! { T::two() * });
+                            tokens.append_all(quote! { (T::one() + T::one()) * });
                         } else {
                             panic!("No representation for large coefficient {}", coef);
                         }
@@ -1065,8 +1065,20 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         }
                     }
                     // TODO: Some norms can be optimized to avoid needing Sqrt
-                    impl < T: Ring + Sqrt > Norm for #type_name {}
-                    impl < T: Ring + Sqrt > INorm for #type_name {}
+                    impl < T: Ring + Sqrt > Norm for #type_name {
+                        type Output = T;
+
+                        fn norm (self) -> T {
+                            self.norm_squared().sqrt()
+                        }
+                    }
+                    impl < T: Ring + Sqrt > INorm for #type_name {
+                        type Output = T;
+
+                        fn inorm (self) -> T {
+                            self.inorm_squared().sqrt()
+                        }
+                    }
                 }
             };
 
@@ -1127,7 +1139,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let vee_product = |i: usize, j: usize| {
                 let dual = |ix| basis.len() - ix - 1;
 
-                let (coef, ix) = multiplication_table[dual(i)][dual(j)];
+                let i = dual(i);
+                let j = dual(j);
+
+                let (coef, ix) = multiplication_table[i][j];
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
@@ -1339,8 +1354,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 // #name
                 // ===========================================================================
 
-                // TODO: NormSquared & Norm
-                // TODO: exp
                 #neg_code
                 #reverse_code
                 #dual_code

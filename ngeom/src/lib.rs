@@ -10,9 +10,6 @@ pub mod scalar {
     {
         fn zero() -> Self;
         fn one() -> Self;
-        fn two() -> Self {
-            Self::one() + Self::one()
-        }
     }
 
     pub trait Sqrt {
@@ -119,8 +116,6 @@ pub mod scalar {
 }
 
 pub mod blade {
-    use crate::scalar::Sqrt;
-
     pub trait Reverse {
         fn reverse(self) -> Self;
     }
@@ -140,21 +135,14 @@ pub mod blade {
         fn inorm_squared(self) -> Self::Output;
     }
 
-    pub trait Norm: NormSquared<Output: Sqrt>
-    where
-        Self: Sized,
-    {
-        fn norm(self) -> Self::Output {
-            self.norm_squared().sqrt()
-        }
+    pub trait Norm {
+        type Output;
+        fn norm(self) -> Self::Output;
     }
-    pub trait INorm: INormSquared<Output: Sqrt>
-    where
-        Self: Sized,
-    {
-        fn inorm(self) -> Self::Output {
-            self.inorm_squared().sqrt()
-        }
+
+    pub trait INorm {
+        type Output;
+        fn inorm(self) -> Self::Output;
     }
 
     pub trait Project<T> {
@@ -178,6 +166,15 @@ pub mod blade {
         type Output;
         fn exp(self) -> Self::Output;
     }
+
+    pub trait Hat {
+        // Typically, the .hat() function returns Self,
+        // but since normalizing a blade is not exception-free,
+        // the output type is left to the implementer
+        // so they may choose Option<Self> or similar.
+        type Output;
+        fn hat(self) -> Self::Output;
+    }
 }
 
 use crate::blade::Dual;
@@ -186,25 +183,27 @@ pub struct Never;
 
 pub trait Algebra
 where
-    Self::Scalar: Dual<Output = Self::ScalarDual>,
+    Self::ScalarDual: Dual<Output = Self::Scalar>,
 {
     type Scalar;
     type Point;
     type Line;
     type Plane;
-    type Space;
+    type E3;
+    type E4;
 
-    type ScalarDual;
-    type PointDual;
+    type ScalarDual; // AKA pseudoscalar
+    type PointDual; // AKA hyperplane
     type LineDual;
     type PlaneDual;
-    type SpaceDual;
+    type E3Dual;
+    type E4Dual;
 
     type Motor;
-    type MotorDual;
+    type MotorDual; // AKA flector
 }
 
-mod pga2d {
+pub mod pga2d {
     use crate::blade::{
         Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
         Transform,
@@ -223,14 +222,54 @@ mod pga2d {
             self * theta.sinc() + theta.cos()
         }
     }
+
+    // Construction functions
+    pub fn i<T: Ring>() -> Pseudoscalar<T> {
+        Pseudoscalar { a012: T::one() }
+    }
+
+    pub fn point<T: Ring>(x: T, y: T) -> Bivector<T> {
+        Bivector {
+            a01: T::one(),
+            a20: y,
+            a12: x,
+        }
+    }
+
+    pub fn point_ideal<T: Ring>(x: T, y: T) -> Bivector<T> {
+        Bivector {
+            a01: T::zero(),
+            a20: y,
+            a12: x,
+        }
+    }
+
+    pub fn point_homogeneous<T: Ring>(x: T, y: T, w: T) -> Bivector<T> {
+        Bivector {
+            a01: w,
+            a20: y,
+            a12: x,
+        }
+    }
+
+    /// Line with equation ax + by + c = 0
+    pub fn line<T: Ring>(a: T, b: T, c: T) -> Vector<T> {
+        Vector {
+            a0: a,
+            a1: b,
+            a2: c,
+        }
+    }
 }
 
-mod pga3d {
+pub mod pga3d {
     use crate::blade::{
         Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
         Transform,
     };
     use crate::scalar::{Ring, Sqrt, Trig};
+    use crate::Algebra;
+    use core::marker::PhantomData;
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(1, 1, 1, 0);
@@ -244,39 +283,128 @@ mod pga3d {
             self * theta.sinc() + theta.cos()
         }
     }
+
+    // Construction functions
+    pub fn i<T: Ring>() -> Pseudoscalar<T> {
+        Pseudoscalar { a0123: T::one() }
+    }
+
+    pub fn point<T: Ring>(x: T, y: T, z: T) -> Trivector<T> {
+        Trivector {
+            a021: T::one(),
+            a013: z,
+            a032: y,
+            a123: x,
+        }
+    }
+
+    pub fn point_ideal<T: Ring>(x: T, y: T, z: T) -> Trivector<T> {
+        Trivector {
+            a021: T::zero(),
+            a013: z,
+            a032: y,
+            a123: x,
+        }
+    }
+
+    pub fn point_homogeneous<T: Ring>(x: T, y: T, z: T, w: T) -> Trivector<T> {
+        Trivector {
+            a021: w,
+            a013: z,
+            a032: y,
+            a123: x,
+        }
+    }
+
+    /// Line with equation ax + by + c = 0
+    pub fn plane<T: Ring>(a: T, b: T, c: T, d: T) -> Vector<T> {
+        Vector {
+            a0: a,
+            a1: b,
+            a2: c,
+            a3: d,
+        }
+    }
+
+    struct PGA3D<T: Ring + Sqrt + Trig>(PhantomData<T>);
+
+    impl<T: Ring + Sqrt + Trig> Algebra for PGA3D<T> {
+        type Scalar = T;
+        type Point = Trivector<T>;
+        type Line = Bivector<T>;
+        type Plane = Vector<T>;
+        type E3 = Pseudoscalar<T>;
+        type E4 = crate::Never;
+
+        type ScalarDual = Pseudoscalar<T>;
+        type PointDual = Vector<T>;
+        type LineDual = Bivector<T>;
+        type PlaneDual = Trivector<T>;
+        type E3Dual = T;
+        type E4Dual = crate::Never;
+
+        type Motor = Even<T>;
+        type MotorDual = Odd<T>;
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use super::blade::{Hat, Norm};
+    use super::scalar::Ring;
     use super::*;
+    use core::ops::{Div, Mul};
+
+    trait IsClose {
+        fn is_close(self, rhs: Self) -> bool;
+    }
+
+    impl IsClose for f32 {
+        fn is_close(self, rhs: f32) -> bool {
+            (self - rhs).abs() < 1e-5
+        }
+    }
+
+    impl<B: Copy + Norm<Output: Ring> + Mul<<B as Norm>::Output, Output = B>> Hat for B
+    where
+        <B as Norm>::Output: Div<<B as Norm>::Output, Output = <B as Norm>::Output>,
+    {
+        type Output = Self;
+        fn hat(self) -> Self {
+            self * (<B as Norm>::Output::one() / self.norm())
+        }
+    }
 
     #[test]
     fn construction() {
         // 2D
-        let _point = pga2d::Bivector {
-            a01: 1.,
-            a20: 4.,
-            a12: 3.,
-        };
-        let _line = pga2d::Vector {
-            a0: 3.,
-            a1: 4.,
-            a2: 1.,
-        };
+        let _point = pga2d::point(3., 4.);
+        let _line = pga2d::line(3., 4., 1.);
 
         // 3D
-        let _point = pga3d::Trivector {
-            a021: 1.,
-            a013: 5.,
-            a032: 4.,
-            a123: 3.,
-        };
+        let _point = pga3d::point(3., 4., 5.);
         // TODO: line
-        let _plane = pga3d::Vector {
-            a0: 3.,
-            a1: 4.,
-            a2: 5.,
-            a3: 1.,
-        };
+        let _plane = pga3d::plane(3., 4., 5., 1.);
+    }
+
+    #[test]
+    fn metric() {
+        // 2D distance between points
+        let p1 = pga2d::point(10., 10.);
+        let p2 = pga2d::point(13., 14.);
+        let dist = (p1 & p2).norm();
+        assert!(dist.is_close(5.));
+
+        // 3D distance between points
+        let p1 = pga3d::point(10., 10., 10.);
+        let p2 = pga3d::point(13., 14., 10.);
+        let dist = (p1 & p2).norm();
+        assert!(dist.is_close(5.));
+
+        // 2D angle of intersecting lines
+        let l1 = (pga2d::point::<f32>(0., 0.) & pga2d::point(5., 5.)).hat();
+        let l2 = (pga2d::point(0., 0.) & pga2d::point(-10., 10.)).hat();
+        let angle = (l1 ^ l2).norm().atan2(l1 | l2);
+        assert!(angle.is_close(0.25 * core::f32::consts::TAU));
     }
 }
