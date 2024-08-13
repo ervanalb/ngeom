@@ -909,6 +909,87 @@ fn gen_algebra2(input: Input) -> TokenStream {
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
+            // Derive debug
+            let debug_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let fmt_expr_components: String = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| {
+                                is_selected.then(|| 
+                                    format!("{}: {{:?}}, ", coefficient_ident("a", b))
+                                )
+                            })
+                            .collect();
+                        let fmt_vars: TokenStream = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| {
+                                is_selected.then(|| {
+                                    let identifier = coefficient_ident("a", b);
+                                    quote! {
+                                        self.#identifier,
+                                    }
+                                })
+                            })
+                            .collect();
+                        let fmt_expr = format!("{}: {{{{{}}}}}", obj.name, fmt_expr_components);
+                        let type_name = &obj.type_name_colons();
+                        quote! {
+                            impl <T: Ring + core::fmt::Debug> core::fmt::Debug for #type_name {
+                                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                                    write!(f, #fmt_expr, #fmt_vars)
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Derive display
+            let display_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let fmt_expr: String = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| {
+                                is_selected.then(|| 
+                                    if b.len() == 0 {
+                                        "({}) + ".to_string()
+                                    } else {
+                                        format!("({{}}) * {} + ", coefficient_ident("e", b))
+                                    }
+                                )
+                            })
+                            .collect();
+                        let fmt_vars: TokenStream = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| {
+                                is_selected.then(|| {
+                                    let identifier = coefficient_ident("a", b);
+                                    quote! {
+                                        self.#identifier,
+                                    }
+                                })
+                            })
+                            .collect();
+                        let type_name = &obj.type_name_colons();
+                        quote! {
+                            impl <T: Ring + core::fmt::Display> core::fmt::Display for #type_name {
+                                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                                    write!(f, #fmt_expr, #fmt_vars)
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
             // Overload unary -
             let op_trait = quote! { std::ops::Neg };
             let op_fn = Ident::new("neg", Span::call_site());
@@ -949,7 +1030,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     return quote! {};
                 }
 
-                let gen_norm_squared_return_expr = |dual| {
+                let gen_norm_return_exprs = |dual| {
                     let mut expressions: Vec<SymbolicSumExpr> =
                         vec![Default::default(); obj.select_components.len()];
                     // The squared norms are computed like a product
@@ -1016,14 +1097,31 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     //    "Expression for squared norm was not a non-zero scalar"
                     //);
 
-                    // Convert the expression to token trees
-                    let expressions: Vec<TokenStream> = expressions
-                        .into_iter()
-                        .map(|expr| quote! { #expr })
-                        .collect();
+                    // Take expressions[0]
+                    let expression = expressions.into_iter().next().unwrap();
 
-                    // Find and replace temporary a### & b### identifier with self.a### & r.a###
-                    let expressions = rewrite_identifiers(expressions, |ident| {
+                    // See if we can take the square root symbolically
+                    let norm_expression = {
+                        let SymbolicSumExpr(terms) = &expression;
+                        if terms.len() == 1 {
+                            let SymbolicProdExpr(coef, terms) = &terms[0];
+                            if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
+                                Some(SymbolicSumExpr(vec![SymbolicProdExpr(1, vec![terms[0].clone()])]))
+                            } else {
+                                None // Expression is not a square
+                            }
+                        } else {
+                            None // Multiple terms in the sum
+                        }
+                    };
+
+                    // Convert the expression to token stream
+                    let norm_sq_expression = quote! { #expression };
+                    let norm_expression = norm_expression.map(|expr| quote! { #expr });
+
+                    // Find and replace temporary a### identifier with self.a###
+                    // This is a bit hacky since rewrite_identifiers takes & returns a Vec
+                    let norm_sq_expression = rewrite_identifiers(vec![norm_sq_expression], |ident| {
                         basis.iter().find_map(move |b| {
                             if ident == &coefficient_ident("a", b) {
                                 Some(if obj.is_scalar {
@@ -1039,17 +1137,34 @@ fn gen_algebra2(input: Input) -> TokenStream {
                                 None
                             }
                         })
-                    });
+                    }).into_iter().next().unwrap();
 
-                    // Take expressions[0]
-                    expressions.into_iter().next().unwrap()
+                    let norm_expression = norm_expression.map(|expr| rewrite_identifiers(vec![expr], |ident| {
+                        basis.iter().find_map(move |b| {
+                            if ident == &coefficient_ident("a", b) {
+                                Some(if obj.is_scalar {
+                                    assert!(b.len() == 0);
+                                    quote! { self }
+                                } else {
+                                    // All fields are in the format "a###"
+                                    // so we can re-use the temporary identifier
+                                    let new_ident = ident;
+                                    quote! { self.#new_ident }
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                    }).into_iter().next().unwrap());
+
+                    (norm_expression, norm_sq_expression)
                 };
 
                 let type_name = obj.type_name_colons();
-                let norm_squared_return_expr = gen_norm_squared_return_expr(false);
-                let inorm_squared_return_expr = gen_norm_squared_return_expr(true);
+                let (norm_return_expr, norm_squared_return_expr) = gen_norm_return_exprs(false);
+                let (inorm_return_expr, inorm_squared_return_expr) = gen_norm_return_exprs(true);
 
-                quote! {
+                let norm_squared_code = quote! {
                     impl < T: Ring > NormSquared for #type_name {
                         type Output = T;
 
@@ -1057,28 +1172,66 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             #norm_squared_return_expr
                         }
                     }
+                };
 
+                let inorm_squared_code = quote! {
                     impl < T: Ring > INormSquared for #type_name {
                         type Output = T;
                         fn inorm_squared (self) -> T {
                             #inorm_squared_return_expr
                         }
                     }
-                    // TODO: Some norms can be optimized to avoid needing Sqrt
-                    impl < T: Ring + Sqrt > Norm for #type_name {
-                        type Output = T;
+                };
 
-                        fn norm (self) -> T {
-                            self.norm_squared().sqrt()
+                let norm_code = if let Some(norm_return_expr) = norm_return_expr {
+                    quote! {
+                        impl < T: Ring > Norm for #type_name {
+                            type Output = T;
+
+                            fn norm (self) -> T {
+                                #norm_return_expr
+                            }
                         }
                     }
-                    impl < T: Ring + Sqrt > INorm for #type_name {
-                        type Output = T;
+                } else {
+                    quote! {
+                        impl < T: Ring + Sqrt > Norm for #type_name {
+                            type Output = T;
 
-                        fn inorm (self) -> T {
-                            self.inorm_squared().sqrt()
+                            fn norm (self) -> T {
+                                self.norm_squared().sqrt()
+                            }
                         }
                     }
+                };
+
+                let inorm_code = if let Some(inorm_return_expr) = inorm_return_expr {
+                    quote! {
+                        impl < T: Ring > INorm for #type_name {
+                            type Output = T;
+
+                            fn inorm (self) -> T {
+                                #inorm_return_expr
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        impl < T: Ring + Sqrt > INorm for #type_name {
+                            type Output = T;
+
+                            fn inorm (self) -> T {
+                                self.inorm_squared().sqrt()
+                            }
+                        }
+                    }
+                };
+
+                quote! {
+                    #norm_squared_code
+                    #inorm_squared_code
+                    #norm_code
+                    #inorm_code
                 }
             };
 
@@ -1199,7 +1352,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, geometric_product),
                 false, // output_self
-                false, // implicit_promotion_to_compound
+                true, // implicit_promotion_to_compound
             );
 
             // Add a method A.cross(B) which computes (A * B - B * A) / 2
@@ -1354,6 +1507,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 // #name
                 // ===========================================================================
 
+                #debug_code
+                #display_code
                 #neg_code
                 #reverse_code
                 #dual_code
