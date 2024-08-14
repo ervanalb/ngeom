@@ -1,6 +1,6 @@
 pub mod scalar {
     use core::ops::{Add, Mul, Neg, Sub};
-    pub trait Ring: // TODO: add RHS?? unify with Blade??
+    pub trait Ring:
         Clone
         + Copy
         + Neg<Output = Self>
@@ -177,26 +177,12 @@ pub mod blade {
         type Output;
         fn hat(self) -> Self::Output;
     }
-
-    pub trait Blade:
-        Sized
-        + core::ops::Mul<Self::Scalar, Output = Self>
-        + core::ops::Add<Self, Output = Self>
-        + core::ops::Sub<Self, Output = Self>
-        + core::ops::Neg<Output = Self>
-        + NormSquared<Output = Self::Scalar>
-        + Dual
-    //where
-    //    <Self as Dual>::Output: Blade<Scalar = Self::Scalar> + Dual<Output = Self>,
-    {
-        type Scalar: Ring;
-    }
 }
 
 pub mod pga2d {
     use crate::blade::{
-        Blade, Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect,
-        Reverse, Transform,
+        Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
+        Transform,
     };
     use crate::scalar::{Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -258,19 +244,12 @@ pub mod pga2d {
             a2: c,
         }
     }
-
-    impl<T: Ring> Blade for Bivector<T> {
-        type Scalar = T;
-    }
-    impl<T: Ring> Blade for Vector<T> {
-        type Scalar = T;
-    }
 }
 
 pub mod pga3d {
     use crate::blade::{
-        Blade, Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect,
-        Reverse, Transform,
+        Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
+        Transform,
     };
     use crate::scalar::{Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -336,21 +315,11 @@ pub mod pga3d {
             a3: d,
         }
     }
-
-    impl<T: Ring> Blade for Trivector<T> {
-        type Scalar = T;
-    }
-    impl<T: Ring> Blade for Bivector<T> {
-        type Scalar = T;
-    }
-    impl<T: Ring> Blade for Vector<T> {
-        type Scalar = T;
-    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::blade::{Blade, Exp, Hat, Norm, Transform};
+    use super::blade::{Exp, Hat, Norm, Transform};
     use super::scalar::Ring;
     use super::*;
     use core::ops::{Div, Mul};
@@ -424,10 +393,11 @@ mod test {
 
     #[test]
     fn metric_generic() {
-        fn metric<P: Blade<Scalar: IsClose>>(p1: P, p2: P, d: P::Scalar)
-        where
-            P: core::ops::BitAnd<P, Output: Blade<Scalar = P::Scalar> + Norm<Output = P::Scalar>>,
-        {
+        fn metric<POINT: core::ops::BitAnd<POINT, Output: Norm<Output: IsClose>>>(
+            p1: POINT,
+            p2: POINT,
+            d: <<POINT as core::ops::BitAnd<POINT>>::Output as Norm>::Output,
+        ) {
             assert!((p1 & p2).norm().is_close(d));
         }
 
