@@ -17,9 +17,12 @@ pub mod scalar {
     }
 
     pub trait Trig {
-        fn sin(self) -> Self;
         fn cos(self) -> Self;
         fn sinc(self) -> Self;
+    }
+
+    pub trait InvTrig {
+        fn atan2(self, other: Self) -> Self;
     }
 
     impl Ring for f32 {
@@ -38,15 +41,18 @@ pub mod scalar {
     }
 
     impl Trig for f32 {
-        fn sin(self) -> f32 {
-            self.sin()
-        }
         fn cos(self) -> f32 {
             self.cos()
         }
         fn sinc(self) -> f32 {
             let self_adj = self.abs() + f32::EPSILON;
             self_adj.sin() / self_adj
+        }
+    }
+
+    impl InvTrig for f32 {
+        fn atan2(self, other: f32) -> f32 {
+            self.atan2(other)
         }
     }
 
@@ -66,15 +72,18 @@ pub mod scalar {
     }
 
     impl Trig for f64 {
-        fn sin(self) -> f64 {
-            self.sin()
-        }
         fn cos(self) -> f64 {
             self.cos()
         }
         fn sinc(self) -> f64 {
             let self_adj = self.abs() + f64::EPSILON;
             self_adj.sin() / self_adj
+        }
+    }
+
+    impl InvTrig for f64 {
+        fn atan2(self, other: f64) -> f64 {
+            self.atan2(other)
         }
     }
 
@@ -116,8 +125,6 @@ pub mod scalar {
 }
 
 pub mod blade {
-    use crate::scalar::Ring;
-
     pub trait Reverse {
         fn reverse(self) -> Self;
     }
@@ -145,6 +152,21 @@ pub mod blade {
     pub trait INorm {
         type Output;
         fn inorm(self) -> Self::Output;
+    }
+
+    pub trait Join<T> {
+        type Output;
+        fn join(self, r: T) -> Self::Output;
+    }
+
+    pub trait Meet<T> {
+        type Output;
+        fn meet(self, r: T) -> Self::Output;
+    }
+
+    pub trait Dot<T> {
+        type Output;
+        fn dot(self, r: T) -> Self::Output;
     }
 
     pub trait Project<T> {
@@ -177,12 +199,21 @@ pub mod blade {
         type Output;
         fn hat(self) -> Self::Output;
     }
+
+    pub trait IHat {
+        // Typically, the .ihat() function returns Self,
+        // but since normalizing a blade is not exception-free,
+        // the output type is left to the implementer
+        // so they may choose Option<Self> or similar.
+        type Output;
+        fn ihat(self) -> Self::Output;
+    }
 }
 
 pub mod pga2d {
     use crate::blade::{
-        Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
-        Transform,
+        Commutator, Dot, Dual, Exp, INorm, INormSquared, Join, Meet, Norm, NormSquared, Project,
+        Reflect, Reverse, Transform,
     };
     use crate::scalar::{Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -248,8 +279,8 @@ pub mod pga2d {
 
 pub mod pga3d {
     use crate::blade::{
-        Commutator, Dual, Exp, INorm, INormSquared, Norm, NormSquared, Project, Reflect, Reverse,
-        Transform,
+        Commutator, Dot, Dual, Exp, INorm, INormSquared, Join, Meet, Norm, NormSquared, Project,
+        Reflect, Reverse, Transform,
     };
     use crate::scalar::{Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -319,8 +350,8 @@ pub mod pga3d {
 
 #[cfg(test)]
 mod test {
-    use super::blade::{Exp, Hat, Norm, Transform};
-    use super::scalar::Ring;
+    use super::blade::{Dot, Exp, Hat, Join, Meet, Norm, Transform};
+    use super::scalar::{InvTrig, Ring};
     use super::*;
     use core::ops::{Div, Mul};
 
@@ -334,11 +365,9 @@ mod test {
         }
     }
 
-    impl<B: Hat<Output: core::ops::BitAnd<<B as Hat>::Output, Output: Norm<Output = f32>>>> IsClose
-        for B
-    {
+    impl<B: Join<B, Output: Norm<Output = f32>>> IsClose for B {
         fn is_close(self, rhs: B) -> bool {
-            (self.hat() & rhs.hat()).norm() < 1e-5
+            (self.join(rhs)).norm() < 1e-5
         }
     }
 
@@ -363,49 +392,49 @@ mod test {
 
     #[test]
     fn metric() {
-        // 2D distance between points
-        let p1 = pga2d::point([10., 10.]);
-        let p2 = pga2d::point([13., 14.]);
-        let dist = (p1 & p2).norm();
-        assert!(dist.is_close(5.));
-
-        // 3D distance between points
-        let p1 = pga3d::point([10., 10., 10.]);
-        let p2 = pga3d::point([13., 14., 10.]);
-        let dist = (p1 & p2).norm();
-        assert!(dist.is_close(5.));
-
-        // 2D angle of intersecting lines
-        let l1 = (pga2d::origin::<f32>() & pga2d::point([5., 5.])).hat();
-        let l2 = (pga2d::origin() & pga2d::point([-10., 10.])).hat();
-        let angle = (l1 ^ l2).norm().atan2(l1 | l2);
-        assert!(angle.is_close(0.25 * core::f32::consts::TAU));
-
-        // 3D angle of intersecting planes
-        let pl1 =
-            (pga3d::origin::<f32>() & pga3d::point([0., 0., 1.]) & pga3d::point([5., 5., 0.]))
-                .hat();
-        let pl2 =
-            (pga3d::origin() & pga3d::point([0., 0., 1.]) & pga3d::point([-10., 10., 0.])).hat();
-        let angle = (pl1 ^ pl2).norm().atan2(pl1 | pl2);
-        assert!(angle.is_close(0.25 * core::f32::consts::TAU));
-    }
-
-    #[test]
-    fn metric_generic() {
-        fn metric<POINT: core::ops::BitAnd<POINT, Output: Norm<Output: IsClose>>>(
+        fn check_dist<POINT: Join<POINT, Output: Norm<Output = SCALAR>>, SCALAR: IsClose>(
             p1: POINT,
             p2: POINT,
-            d: <<POINT as core::ops::BitAnd<POINT>>::Output as Norm>::Output,
+            d: SCALAR,
         ) {
-            assert!((p1 & p2).norm().is_close(d));
+            assert!((p1.join(p2)).norm().is_close(d));
         }
 
-        metric(pga2d::point([10., 10.]), pga2d::point([13., 14.]), 5.);
-        metric(
+        // Distance between points in 2D
+        check_dist(pga2d::point([10., 10.]), pga2d::point([13., 14.]), 5.);
+        // Distance between points in 3D
+        check_dist(
             pga3d::point([10., 10., 0.]),
             pga3d::point([13., 14., 0.]),
             5.,
+        );
+
+        fn check_angle<HYPERPLANE, SCALAR>(hp1: HYPERPLANE, hp2: HYPERPLANE, a: SCALAR)
+        where
+            HYPERPLANE: Copy,
+            HYPERPLANE: Dot<HYPERPLANE, Output = SCALAR>,
+            HYPERPLANE: Meet<HYPERPLANE, Output: Norm<Output = SCALAR>>,
+            SCALAR: InvTrig + IsClose,
+        {
+            assert!((hp1.meet(hp2)).norm().atan2(hp1.dot(hp2)).is_close(a));
+        }
+
+        // Angle between lines in 2D
+        check_angle(
+            pga2d::origin::<f32>().join(pga2d::point([0., 5.])),
+            pga2d::origin().join(pga2d::point([-10., 10.])),
+            0.125 * core::f32::consts::TAU,
+        );
+
+        // Angle between planes in 3D
+        check_angle(
+            pga3d::origin::<f32>()
+                .join(pga3d::point([0., 0., 1.]))
+                .join(pga3d::point([0., 5., 0.])),
+            pga3d::origin()
+                .join(pga3d::point([0., 0., 1.]))
+                .join(pga3d::point([-10., 10., 0.])),
+            0.125 * core::f32::consts::TAU,
         );
     }
 
@@ -429,8 +458,8 @@ mod test {
         dbg!(motor);
 
         // This one works
-        let l1 = pga2d::origin() & pga2d::point([5., 5.]);
-        let l2 = pga2d::origin() & pga2d::point([-10., 10.]);
+        let l1 = pga2d::origin().join(pga2d::point([5., 5.]));
+        let l2 = pga2d::origin().join(pga2d::point([-10., 10.]));
         let motor = (l2 * l1).hat() + 1.;
         dbg!(motor);
 

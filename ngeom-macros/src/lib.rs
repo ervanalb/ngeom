@@ -1263,9 +1263,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 true,  // implicit_promotion_to_compound
             );
 
-            // Overload ^ with the wedge product
-            let op_trait = quote! { core::ops::BitXor };
-            let op_fn = Ident::new("bitxor", Span::call_site());
+            // Add a method A.meet(B) which computes A ^ B
+            let op_trait = quote! { Meet };
+            let op_fn = Ident::new("meet", Span::call_site());
             let wedge_product = |i: usize, j: usize| {
                 let (coef, ix) = multiplication_table[i][j];
                 // Select grade s + t
@@ -1286,9 +1286,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Overload & with the vee product
-            let op_trait = quote! { core::ops::BitAnd };
-            let op_fn = Ident::new("bitand", Span::call_site());
+            // Add a method A.join(B) which computes A v B
+            let op_trait = quote! { Join };
+            let op_fn = Ident::new("join", Span::call_site());
             let vee_product = |i: usize, j: usize| {
                 let dual = |ix| basis.len() - ix - 1;
 
@@ -1316,9 +1316,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Overload | with the dot product
-            let op_trait = quote! { core::ops::BitOr };
-            let op_fn = Ident::new("bitor", Span::call_site());
+            // Implement the dot product
+            let op_trait = quote! { Dot };
+            let op_fn = Ident::new("dot", Span::call_site());
             let dot_product = |i: usize, j: usize| {
                 let (coef, ix) = multiplication_table[i][j];
                 // Select grade |s - t|
