@@ -298,6 +298,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
     // and a full multivector uses all of them: [1, 1, 1, 1, 1, 1, 1, 1]
     // An object such as a Bivector would only use a few of them: [0, 0, 0, 0, 1, 1, 1, 0]
 
+    #[derive(PartialEq)]
     struct Object {
         name: Ident,
         select_components: Vec<bool>,
@@ -356,6 +357,19 @@ fn gen_algebra2(input: Input) -> TokenStream {
         });
     }
 
+    // Add scalar plus pseudoscalar to the object set
+    let select_components: Vec<_> = basis
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i == 0 || i == basis.len() - 1)
+        .collect();
+    objects.push(Object {
+        name: Ident::new("Magnitude", Span::call_site()),
+        select_components,
+        is_scalar: false,
+        is_compound: true,
+    });
+
     // Add even & odd sub-algebras to the object set
     for parity in 0..2 {
         let select_components: Vec<_> = basis.iter().map(|b| b.len() % 2 == parity).collect();
@@ -374,19 +388,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
             is_compound: true,
         });
     }
-
-    // Add scalar plus pseudoscalar to the object set
-    let select_components: Vec<_> = basis
-        .iter()
-        .enumerate()
-        .map(|(i, _)| i == 0 || i == basis.len())
-        .collect();
-    objects.push(Object {
-        name: Ident::new("Magnitude", Span::call_site()),
-        select_components,
-        is_scalar: false,
-        is_compound: true,
-    });
 
     fn rewrite_identifiers<F: Fn(&Ident) -> Option<TokenStream>>(
         expressions_code: Vec<TokenStream>,
@@ -543,6 +544,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // so don't generate any code
             return quote! {};
         };
+
+        if output_self && output_object != obj {
+            // This function is required to return Self
+            // but we got a different output type,
+            // so don't generate any code
+            return quote! {};
+        };
+
 
         if output_object.is_scalar && expressions[0].0.len() == 0 {
             // This operation unconditionally returns 0,
@@ -857,6 +866,13 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
                 let Some(output_object) = output_object else {
                     // No output object matches the result we got,
+                    // so don't generate any code
+                    return quote! {};
+                };
+
+                if output_self && output_object != lhs_obj {
+                    // This function is required to return Self
+                    // but we got a different output type,
                     // so don't generate any code
                     return quote! {};
                 };
