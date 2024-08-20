@@ -375,6 +375,19 @@ fn gen_algebra2(input: Input) -> TokenStream {
         });
     }
 
+    // Add scalar plus pseudoscalar to the object set
+    let select_components: Vec<_> = basis
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i == 0 || i == basis.len())
+        .collect();
+    objects.push(Object {
+        name: Ident::new("Magnitude", Span::call_site()),
+        select_components,
+        is_scalar: false,
+        is_compound: true,
+    });
+
     fn rewrite_identifiers<F: Fn(&Ident) -> Option<TokenStream>>(
         expressions_code: Vec<TokenStream>,
         replacement: F,
@@ -397,7 +410,102 @@ fn gen_algebra2(input: Input) -> TokenStream {
             .collect()
     }
 
-    fn gen_unary_operator<F: Fn(usize) -> (isize, usize)>(
+    // Function to generate a simple unary operator on an object,
+    // where entries can be rearranged and coefficients can be modified
+    // (e.g. for implementing neg, dual, reverse)
+    // The result will be a list of symbolic expressions,
+    // one for each coefficient value in the resultant multivector.
+    fn generate_symbolic_rearrangement<F: Fn(usize) -> (isize, usize)>(
+        basis: &Vec<Vec<usize>>,
+        select_components: &[bool],
+        op: F,
+    ) -> Vec<SymbolicSumExpr> {
+        // Generate the sum
+        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components.len()];
+
+        for (i, &is_selected) in select_components.iter().enumerate() {
+            if is_selected {
+                let (coef, result_basis_ix) = op(i);
+                result[result_basis_ix] +=
+                    SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("a", &basis[i]))]);
+            }
+        }
+
+        result.into_iter().map(|expr| expr.simplify()).collect()
+    }
+
+    fn generate_symbolic_norm<F: Fn(usize, usize) -> (isize, usize)>(
+        basis: &Vec<Vec<usize>>,
+        select_components: &[bool],
+        product: F,
+        sqrt: bool,
+    ) -> Vec<SymbolicSumExpr> {
+        // Generate the product
+        let mut expressions: Vec<SymbolicSumExpr> =
+            vec![Default::default(); select_components.len()];
+        for i in select_components
+            .iter()
+            .enumerate()
+            .filter_map(|(i, is_selected)| is_selected.then_some(i))
+        {
+            for j in select_components
+                .iter()
+                .enumerate()
+                .filter_map(|(j, is_selected)| is_selected.then_some(j))
+            {
+                let (coef, ix_result) = product(i, j);
+
+                expressions[ix_result] += SymbolicProdExpr(
+                    coef,
+                    vec![
+                        Symbol(coefficient_ident("a", &basis[i])),
+                        Symbol(coefficient_ident("a", &basis[j])),
+                    ],
+                );
+            }
+        }
+
+        let expressions: Vec<_> = expressions
+            .into_iter()
+            .map(|expr| expr.simplify())
+            .collect();
+
+        if sqrt {
+            // See if we can take the square root symbolically
+            // Otherwise, return an empty expression (which will cause no code to be generated)
+            {
+                let is_scalar = expressions.iter().enumerate().all(|(i, expr)| match i {
+                    0 => true,
+                    _ => expr.0.len() == 0,
+                });
+                if is_scalar {
+                    let expression = expressions[0].clone();
+                    let SymbolicSumExpr(terms) = &expression;
+                    if terms.len() == 1 {
+                        let SymbolicProdExpr(coef, terms) = &terms[0];
+                        if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
+                            Some(vec![SymbolicSumExpr(vec![SymbolicProdExpr(
+                                1,
+                                vec![terms[0].clone()],
+                            )])])
+                        } else {
+                            None // Expression is not a square
+                        }
+                    } else {
+                        None // Multiple terms in the sum
+                    }
+                } else {
+                    None // Squared norm is not a scalar
+                }
+            }
+            .unwrap_or(vec![Default::default(); select_components.len()])
+        } else {
+            // Return the squared norm
+            expressions
+        }
+    }
+
+    fn gen_unary_operator<F: Fn(&[bool]) -> Vec<SymbolicSumExpr>>(
         basis: &Vec<Vec<usize>>,
         objects: &[Object],
         op_trait: TokenStream,
@@ -415,24 +523,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
         // Generate the vec of symbolic expressions (one for each basis element coefficient)
         // that computes the given unary operator
-        let mut expressions: Vec<SymbolicSumExpr> =
-            vec![Default::default(); obj.select_components.len()];
-        for i in obj
-            .select_components
-            .iter()
-            .enumerate()
-            .filter_map(|(i, is_selected)| is_selected.then_some(i))
-        {
-            let (coef, result_basis_ix) = op(i);
-
-            expressions[result_basis_ix] +=
-                SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("a", &basis[i]))]);
-        }
-
-        let expressions: Vec<_> = expressions
-            .into_iter()
-            .map(|expr| expr.simplify())
-            .collect();
+        let expressions = op(&obj.select_components);
 
         // Figure out what the type of the output is
         let select_output_components: Vec<_> = expressions
@@ -735,6 +826,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
         op: F,
         output_self: bool,
         implicit_promotion_to_compound: bool,
+        negative_marker_trait: Option<TokenStream>,
     ) -> TokenStream {
         objects
             .iter()
@@ -769,12 +861,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     return quote! {};
                 };
 
-                if output_object.is_scalar && expressions[0].0.len() == 0 {
-                    // This operation unconditionally returns 0,
-                    // so invoking it is probably a type error--
-                    // do not generate code for it
-                    return quote! {};
-                }
+                let rhs_type_name = &rhs_obj.type_name();
+                let lhs_type_name = &lhs_obj.type_name();
+                let output_type_name = &output_object.type_name_colons();
 
                 if !implicit_promotion_to_compound
                     && (output_object.is_compound
@@ -788,9 +877,20 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     return quote! {};
                 }
 
-                let output_type_name = &output_object.type_name_colons();
-                let rhs_type_name = &rhs_obj.type_name();
-                let lhs_type_name = &lhs_obj.type_name();
+                if output_object.is_scalar && expressions[0].0.len() == 0 {
+                    // This operation unconditionally returns 0,
+                    // so invoking it is probably a type error--
+                    // do not generate code for it.
+                    // Instead, generate an impl for the negative marker trait
+                    // if one is given.
+
+                    return match &negative_marker_trait {
+                        Some(negative_marker_trait) => quote! {
+                            impl < T: Ring > #negative_marker_trait < #rhs_type_name > for #lhs_type_name { }
+                        },
+                        None => quote! {}
+                    };
+                }
 
                 // Convert the expression to token trees
                 let expressions: Vec<TokenStream> = expressions
@@ -918,7 +1018,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             .iter()
                             .zip(obj.select_components.iter())
                             .filter_map(|(b, is_selected)| {
-                                is_selected.then(|| 
+                                is_selected.then(||
                                     format!("{}: {{:?}}, ", coefficient_ident("a", b))
                                 )
                             })
@@ -957,7 +1057,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             .iter()
                             .zip(obj.select_components.iter())
                             .filter_map(|(b, is_selected)| {
-                                is_selected.then(|| 
+                                is_selected.then(||
                                     if b.len() == 0 {
                                         "({}) + ".to_string()
                                     } else {
@@ -993,247 +1093,126 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Overload unary -
             let op_trait = quote! { std::ops::Neg };
             let op_fn = Ident::new("neg", Span::call_site());
-            let neg_f = |i: usize| (-1, i);
-            let neg_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, neg_f, false);
+            let neg_code = gen_unary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a| generate_symbolic_rearrangement(&basis, a, |i: usize| (-1, i)),
+                false
+            );
 
             // Add a method A.reverse()
             let op_trait = quote! { Reverse };
             let op_fn = Ident::new("reverse", Span::call_site());
-            let reverse_f = |i: usize| {
-                let coef = match (basis[i].len() / 2) % 2 {
-                    0 => 1,
-                    1 => -1,
-                    _ => panic!("Expected parity to be 0 or 1"),
-                };
-                (coef, i)
-            };
             let reverse_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, reverse_f, true);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_rearrangement(&basis, a, |i: usize| {
+                    let coef = match (basis[i].len() / 2) % 2 {
+                        0 => 1,
+                        1 => -1,
+                        _ => panic!("Expected parity to be 0 or 1"),
+                    };
+                    (coef, i)
+                }), true);
 
             // Add a method A.dual()
             let op_trait = quote! { Dual };
             let op_fn = Ident::new("dual", Span::call_site());
-            let dual_f = |i: usize| {
-                // We have set up our basis carefully to allow this
-                (1, basis.len() - i - 1)
-            };
+            // We have set up our basis carefully to allow coefficient reversal
+            // to produce a valid complement
             let dual_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, dual_f, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_rearrangement(&basis, a, |i: usize| 
+                    (1, basis.len() - i - 1)
+                    ), false);
 
-            // Add methods: norm_squared() and inorm_squared()
-            // as well as norm() and inorm() if the scalar type implements sqrt()
-            let norm_code = {
-                if obj.is_scalar {
-                    // Do not generate norm operations for the scalar type
-                    // since this will result in conflicting trait implementations
-                    return quote! {};
-                }
+            // Add a method A.geometric_norm_squared()
+            let op_trait = quote! { GeometricNormSquared };
+            let op_fn = Ident::new("geometric_norm_squared", Span::call_site());
+            let geometric_norm_product_f =|i: usize, j: usize| {
+                // Compute the product A * ~A
 
-                let gen_norm_return_exprs = |dual| {
-                    let mut expressions: Vec<SymbolicSumExpr> =
-                        vec![Default::default(); obj.select_components.len()];
-                    // The squared norms are computed like a product
-                    // so this code looks similar to the generic product code
-                    for i in obj
-                        .select_components
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, is_selected)| is_selected.then_some(i))
-                    {
-                        for j in obj
-                            .select_components
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(j, is_selected)| is_selected.then_some(j))
-                        {
-                            // Compute the product A * ~A
-                            // or dual(A) * ~dual(A) depending on dual flag
-
-                            let symbols = vec![
-                                Symbol(coefficient_ident("a", &basis[i])),
-                                Symbol(coefficient_ident("a", &basis[j])),
-                            ];
-
-                            let (i, j) = if dual {
-                                (basis.len() - i - 1, basis.len() - j - 1)
-                            } else {
-                                (i, j)
-                            };
-
-                            let reverse_coef = match (basis[j].len() / 2) % 2 {
-                                0 => 1,
-                                1 => -1,
-                                _ => panic!("Expected parity to be 0 or 1"),
-                            };
-
-                            let (coef, ix_result) = multiplication_table[i][j];
-
-                            expressions[ix_result] +=
-                                SymbolicProdExpr(coef * reverse_coef, symbols);
-                        }
-                    }
-
-                    let expressions: Vec<_> = expressions
-                        .into_iter()
-                        .map(|expr| expr.simplify())
-                        .collect();
-
-                    // Ensure the result is a non-zero scalar
-                    // TODO: should it be?
-                    //assert!(
-                    //    expressions
-                    //        .iter()
-                    //        .enumerate()
-                    //        .all(|(i, SymbolicSumExpr(terms))| if i == 0 {
-                    //            true
-                    //        } else {
-                    //            if terms.len() != 0 {
-                    //                let expr = SymbolicSumExpr(terms.clone());
-                    //                println!("Obj {} norm {}: Coef {:?} was {}", obj.name, dual, i, quote! { #expr });
-                    //            }
-                    //            terms.len() == 0
-                    //        }),
-                    //    "Expression for squared norm was not a non-zero scalar"
-                    //);
-
-                    // Take expressions[0]
-                    let expression = expressions.into_iter().next().unwrap();
-
-                    // See if we can take the square root symbolically
-                    let norm_expression = {
-                        let SymbolicSumExpr(terms) = &expression;
-                        if terms.len() == 1 {
-                            let SymbolicProdExpr(coef, terms) = &terms[0];
-                            if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
-                                Some(SymbolicSumExpr(vec![SymbolicProdExpr(1, vec![terms[0].clone()])]))
-                            } else {
-                                None // Expression is not a square
-                            }
-                        } else {
-                            None // Multiple terms in the sum
-                        }
-                    };
-
-                    // Convert the expression to token stream
-                    let norm_sq_expression = quote! { #expression };
-                    let norm_expression = norm_expression.map(|expr| quote! { #expr });
-
-                    // Find and replace temporary a### identifier with self.a###
-                    // This is a bit hacky since rewrite_identifiers takes & returns a Vec
-                    let norm_sq_expression = rewrite_identifiers(vec![norm_sq_expression], |ident| {
-                        basis.iter().find_map(move |b| {
-                            if ident == &coefficient_ident("a", b) {
-                                Some(if obj.is_scalar {
-                                    assert!(b.len() == 0);
-                                    quote! { self }
-                                } else {
-                                    // All fields are in the format "a###"
-                                    // so we can re-use the temporary identifier
-                                    let new_ident = ident;
-                                    quote! { self.#new_ident }
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                    }).into_iter().next().unwrap();
-
-                    let norm_expression = norm_expression.map(|expr| rewrite_identifiers(vec![expr], |ident| {
-                        basis.iter().find_map(move |b| {
-                            if ident == &coefficient_ident("a", b) {
-                                Some(if obj.is_scalar {
-                                    assert!(b.len() == 0);
-                                    quote! { self }
-                                } else {
-                                    // All fields are in the format "a###"
-                                    // so we can re-use the temporary identifier
-                                    let new_ident = ident;
-                                    quote! { self.#new_ident }
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                    }).into_iter().next().unwrap());
-
-                    (norm_expression, norm_sq_expression)
+                let reverse_coef = match (basis[j].len() / 2) % 2 {
+                    0 => 1,
+                    1 => -1,
+                    _ => panic!("Expected parity to be 0 or 1"),
                 };
 
-                let type_name = obj.type_name_colons();
-                let (norm_return_expr, norm_squared_return_expr) = gen_norm_return_exprs(false);
-                let (inorm_return_expr, inorm_squared_return_expr) = gen_norm_return_exprs(true);
+                let (coef, ix_result) = multiplication_table[i][j];
 
-                let norm_squared_code = quote! {
-                    impl < T: Ring > NormSquared for #type_name {
-                        type Output = T;
-
-                        fn norm_squared (self) -> T {
-                            #norm_squared_return_expr
-                        }
-                    }
-                };
-
-                let inorm_squared_code = quote! {
-                    impl < T: Ring > INormSquared for #type_name {
-                        type Output = T;
-                        fn inorm_squared (self) -> T {
-                            #inorm_squared_return_expr
-                        }
-                    }
-                };
-
-                let norm_code = if let Some(norm_return_expr) = norm_return_expr {
-                    quote! {
-                        impl < T: Ring > Norm for #type_name {
-                            type Output = T;
-
-                            fn norm (self) -> T {
-                                #norm_return_expr
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        impl < T: Ring + Sqrt > Norm for #type_name {
-                            type Output = T;
-
-                            fn norm (self) -> T {
-                                self.norm_squared().sqrt()
-                            }
-                        }
-                    }
-                };
-
-                let inorm_code = if let Some(inorm_return_expr) = inorm_return_expr {
-                    quote! {
-                        impl < T: Ring > INorm for #type_name {
-                            type Output = T;
-
-                            fn inorm (self) -> T {
-                                #inorm_return_expr
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        impl < T: Ring + Sqrt > INorm for #type_name {
-                            type Output = T;
-
-                            fn inorm (self) -> T {
-                                self.inorm_squared().sqrt()
-                            }
-                        }
-                    }
-                };
-
-                quote! {
-                    #norm_squared_code
-                    #inorm_squared_code
-                    #norm_code
-                    #inorm_code
-                }
+                (coef * reverse_coef, ix_result)
             };
+            let geometric_norm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, geometric_norm_product_f, false)
+                    , false);
+
+            // Add a method A.geometric_norm() if it is possible to symbolically take the sqrt
+            let op_trait = quote! { GeometricNorm };
+            let op_fn = Ident::new("geometric_norm", Span::call_site());
+            let geometric_norm_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, geometric_norm_product_f, true)
+                    , false);
+
+            // Add a method A.norm_squared()
+            let op_trait = quote! { NormSquared };
+            let op_fn = Ident::new("norm_squared", Span::call_site());
+            let norm_product_f = |i: usize, j: usize| {
+                // Compute the product A . ~A
+
+                let reverse_coef = match (basis[j].len() / 2) % 2 {
+                    0 => 1,
+                    1 => -1,
+                    _ => panic!("Expected parity to be 0 or 1"),
+                };
+
+                let (coef, ix_result) = multiplication_table[i][j];
+
+                // Select grade |s - t|
+                let s = basis[i].len();
+                let t = basis[j].len();
+                let u = basis[ix_result].len();
+                let coef = if s + u == t || t + u == s { coef } else { 0 };
+
+                (coef * reverse_coef, ix_result)
+            };
+            let norm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, norm_product_f, false)
+                    , false);
+
+            // Add a method A.norm() if it is possible to symbolically take the sqrt
+            let op_trait = quote! { Norm };
+            let op_fn = Ident::new("norm", Span::call_site());
+            let norm_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, norm_product_f, true)
+                    , false);
+
+            let op_trait = quote! { GeometricINormSquared };
+            let op_fn = Ident::new("geometric_inorm_squared", Span::call_site());
+            let geometric_inorm_product_f = |i: usize, j: usize| geometric_norm_product_f(basis.len() - i - 1, basis.len() - j - 1);
+            let geometric_inorm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, geometric_inorm_product_f, false)
+                    , false);
+
+            // Add a method A.geometric_inorm() if it is possible to symbolically take the sqrt
+            let op_trait = quote! { GeometricINorm };
+            let op_fn = Ident::new("geometric_inorm", Span::call_site());
+            let geometric_inorm_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, geometric_inorm_product_f, true)
+                    , false);
+
+            let op_trait = quote! { INormSquared };
+            let op_fn = Ident::new("inorm_squared", Span::call_site());
+            let inorm_product_f = |i: usize, j: usize| norm_product_f(basis.len() - i - 1, basis.len() - j - 1);
+            let inorm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, inorm_product_f, false)
+                    , false);
+
+            // Add a method A.inorm() if it is possible to symbolically take the sqrt
+            let op_trait = quote! { INorm };
+            let op_fn = Ident::new("inorm", Span::call_site());
+            let inorm_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, |a| generate_symbolic_norm(&basis, a, inorm_product_f, true)
+                    , false);
 
             // Overload +
             let op_trait = quote! { core::ops::Add };
@@ -1247,6 +1226,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, 1),
                 false, // output_self
                 true,  // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Overload -
@@ -1261,6 +1241,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, -1),
                 false, // output_self
                 true,  // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.meet(B) which computes A ^ B
@@ -1284,6 +1265,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_product(&basis, a, b, wedge_product),
                 false, // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.join(B) which computes A v B
@@ -1314,6 +1296,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_product(&basis, a, b, vee_product),
                 false, // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Implement the dot product
@@ -1338,6 +1321,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_product(&basis, a, b, dot_product),
                 false, // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Overload * with the geometric product
@@ -1353,6 +1337,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_product(&basis, a, b, geometric_product),
                 false, // output_self
                 true, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.cross(B) which computes (A * B - B * A) / 2
@@ -1362,7 +1347,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let (coef_1, ix) = multiplication_table[i][j];
                 let (coef_2, ix_2) = multiplication_table[j][i];
 
-                let coef = coef_1 + coef_2;
+                let coef = coef_1 - coef_2;
 
                 assert!(ix == ix_2);
                 assert!(coef % 2 == 0);
@@ -1378,6 +1363,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 |a, b| generate_symbolic_product(&basis, a, b, commutator_product),
                 false, // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.transform(B) which computes B * A * ~B
@@ -1422,6 +1408,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 },
                 true,  // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.reflect(B) which computes B * A * B
@@ -1458,6 +1445,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 },
                 true,  // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             // Add a method A.project(B) which computes (B . A) * B
@@ -1500,6 +1488,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 },
                 true,  // output_self
                 false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
             );
 
             quote! {
@@ -1512,7 +1501,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #neg_code
                 #reverse_code
                 #dual_code
+                #norm_squared_code
                 #norm_code
+                #geometric_norm_squared_code
+                #geometric_norm_code
+                #inorm_squared_code
+                #inorm_code
+                #geometric_inorm_squared_code
+                #geometric_inorm_code
                 #add_code
                 #sub_code
                 #wedge_product_code
