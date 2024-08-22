@@ -12,10 +12,6 @@ pub mod scalar {
         fn one() -> Self;
     }
 
-    pub trait Sqrt {
-        fn sqrt(self) -> Self;
-    }
-
     pub trait Trig {
         fn cos(self) -> Self;
         fn sinc(self) -> Self;
@@ -23,6 +19,24 @@ pub mod scalar {
 
     pub trait InvTrig {
         fn atan2(self, other: Self) -> Self;
+    }
+
+    pub trait PartialSqrt: Sized {
+        type Output;
+
+        fn partial_sqrt(self) -> Option<Self::Output>;
+    }
+
+    pub trait Sqrt: PartialSqrt {
+        fn sqrt(self) -> Self::Output;
+    }
+
+    pub trait PartialInv: Sized {
+        fn partial_inv(self) -> Option<Self>;
+    }
+
+    pub trait PartialInvSqrt: Sized {
+        fn partial_inv_sqrt(self) -> Option<Self>;
     }
 
     macro_rules! impl_for_float {
@@ -36,9 +50,17 @@ pub mod scalar {
                 }
             }
 
+            impl PartialSqrt for $type {
+                type Output = $type;
+
+                fn partial_sqrt(self) -> Option<$type> {
+                    Some(self.sqrt())
+                }
+            }
+
             impl Sqrt for $type {
                 fn sqrt(self) -> $type {
-                    self.sqrt()
+                    self.partial_sqrt().unwrap()
                 }
             }
 
@@ -98,8 +120,12 @@ pub mod blade {
         fn norm_squared(self) -> Self::Output;
     }
 
-    pub trait Norm {
+    pub trait PartialNorm {
         type Output;
+        fn partial_norm(self) -> Option<Self::Output>;
+    }
+
+    pub trait Norm: PartialNorm {
         fn norm(self) -> Self::Output;
     }
 
@@ -108,29 +134,41 @@ pub mod blade {
         fn geometric_norm_squared(self) -> Self::Output;
     }
 
-    pub trait GeometricNorm {
+    pub trait PartialGeometricNorm {
         type Output;
+        fn partial_geometric_norm(self) -> Option<Self::Output>;
+    }
+
+    pub trait GeometricNorm: PartialGeometricNorm {
         fn geometric_norm(self) -> Self::Output;
     }
 
-    pub trait INormSquared {
+    pub trait InfNormSquared {
         type Output;
-        fn inorm_squared(self) -> Self::Output;
+        fn inf_norm_squared(self) -> Self::Output;
     }
 
-    pub trait INorm {
+    pub trait PartialInfNorm {
         type Output;
-        fn inorm(self) -> Self::Output;
+        fn partial_inf_norm(self) -> Option<Self::Output>;
     }
 
-    pub trait GeometricINormSquared {
-        type Output;
-        fn geometric_inorm_squared(self) -> Self::Output;
+    pub trait InfNorm: PartialInfNorm {
+        fn inf_norm(self) -> Self::Output;
     }
 
-    pub trait GeometricINorm {
+    pub trait GeometricInfNormSquared {
         type Output;
-        fn geometric_inorm(self) -> Self::Output;
+        fn geometric_inf_norm_squared(self) -> Self::Output;
+    }
+
+    pub trait PartialGeometricInfNorm {
+        type Output;
+        fn partial_geometric_inf_norm(self) -> Option<Self::Output>;
+    }
+
+    pub trait GeometricInfNorm: PartialGeometricInfNorm {
+        fn geometric_inf_norm(self) -> Self::Output;
     }
 
     pub trait Join<T> {
@@ -197,8 +235,14 @@ pub mod blade {
                 }
             }
 
-            impl Norm for $type {
+            impl PartialNorm for $type {
                 type Output = $type;
+                fn partial_norm(self) -> Option<$type> {
+                    Some(self)
+                }
+            }
+
+            impl Norm for $type {
                 fn norm(self) -> $type {
                     self
                 }
@@ -211,8 +255,14 @@ pub mod blade {
                 }
             }
 
-            impl GeometricNorm for $type {
+            impl PartialGeometricNorm for $type {
                 type Output = $type;
+                fn partial_geometric_norm(self) -> Option<$type> {
+                    Some(self)
+                }
+            }
+
+            impl GeometricNorm for $type {
                 fn geometric_norm(self) -> $type {
                     self
                 }
@@ -231,11 +281,12 @@ pub mod blade {
 
 pub mod pga2d {
     use crate::blade::{
-        Commutator, Dot, Dual, Exp, GeometricINorm, GeometricINormSquared, GeometricNorm,
-        GeometricNormSquared, INorm, INormSquared, Join, Meet, Norm, NormSquared, Project, Reflect,
-        Reverse, Transform,
+        Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
+        GeometricNormSquared, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
+        PartialGeometricInfNorm, PartialGeometricNorm, PartialInfNorm, PartialNorm, Project,
+        Reflect, Reverse, Transform,
     };
-    use crate::scalar::{Ring, Sqrt, Trig};
+    use crate::scalar::{PartialSqrt, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1);
@@ -299,34 +350,26 @@ pub mod pga2d {
 
 pub mod pga3d {
     use crate::blade::{
-        Commutator, Dot, Dual, Exp, GeometricINorm, GeometricINormSquared, GeometricNorm,
-        GeometricNormSquared, INorm, INormSquared, Join, Meet, Norm, NormSquared, Project, Reflect,
-        Reverse, Transform,
+        Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
+        GeometricNormSquared, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
+        PartialGeometricInfNorm, PartialGeometricNorm, PartialInfNorm, PartialNorm, Project,
+        Reflect, Reverse, Transform,
     };
-    use crate::scalar::{Ring, Sqrt, Trig};
+    use crate::scalar::{PartialSqrt, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1, 1);
 
-    impl<T: Ring + Sqrt + Trig> Exp for Bivector<T> {
+    impl<T: Ring + Trig> Exp for Bivector<T>
+    where
+        Self: Norm<Output = T>,
+    {
         type Output = Even<T>;
         fn exp(self) -> Even<T> {
             // This formula works because a normalized simple bivector squares to -1
             // allowing us to treat it like the imaginary unit
             let theta = self.norm();
             self * theta.sinc() + theta.cos()
-        }
-    }
-
-    // NOT EXCEPTION FREE
-    impl<T: Ring + Sqrt + core::ops::Div<Output = T>> Sqrt for Magnitude<T> {
-        fn sqrt(self) -> Magnitude<T> {
-            let sqrt_s = self.a.sqrt();
-            let p = self.a0123;
-            Magnitude {
-                a: sqrt_s,
-                a0123: p / (sqrt_s + sqrt_s),
-            }
         }
     }
 
@@ -379,157 +422,15 @@ pub mod pga3d {
             a3: c,
         }
     }
-
-    // Decompose a bivector into two simple bivectors that sum to it.
-    // The first is a euclidean line, and the second is a perpendicular ideal line.
-    // If the input bivector is called a,
-    // define ahat := the normalized copy of a (a simple bivector.)
-    // The decomposition of a is a = u * ahat + v * I * ahat
-    //pub fn decompose(a: Bivector<f32>) -> (Bivector<f32>, Bivector<f32>) {
-    //// Option 1
-    ////let s = dbg!(-a.dot(a));
-    //let s = dbg!(a.geometric_norm_squared());
-    //let pi = dbg!(a.meet(a));
-    //let v_ahat_perp = pi * (-0.5 / s) * a;
-    //let u_ahat = a - pi * (-0.5 / s) * a;
-    //dbg!(("Option 1", u_ahat, v_ahat_perp));
-
-    ////// Option 2: idecompose
-    //let a2 = a.dual();
-    ////let s = dbg!(-a2.dot(a2));
-    //let s2 = dbg!(a.geometric_inorm_squared());
-    ////let s = dbg!(a2.geometric_norm());
-    //let pi = dbg!(a.meet(a));
-    //let v_a2hat_perp = pi * (-0.5 / s2) * a2;
-    //let u_a2hat = a2 - pi * (-0.5 / s2) * a2;
-
-    //dbg!(("Option 2", v_a2hat_perp.dual(), u_a2hat.dual()));
-
-    //// Exception-free approach to calculating v * I * ahat
-    //    let a_dual = a.dual();
-    //    let s = dbg!(a.geometric_norm_squared());
-    //    let s_inf = dbg!(a.geometric_inorm_squared());
-    //    let pi = dbg!(a.meet(a));
-    //    let n_euc = pi * a; // * (-0.5 / s)
-    //    let n_inf = (a_dual * (-s_inf * 2.) - pi * a_dual).dual(); // * (-0.5 / s2);
-    //    let r2 = (n_euc + n_inf) * (-0.5 / (s + s_inf));
-    //    let r1 = a - r2;
-
-    //    dbg!((r1, r2))
-    //}
-}
-
-pub mod metric {
-    use crate::blade::{Commutator, Dot, INorm, INormSquared, Join, Meet, Norm, NormSquared};
-    use crate::scalar::{InvTrig, Ring, Sqrt};
-
-    /// Computes the square of the distance between two normalized geometric entities.
-    /// such as two points, or a point and a line in 2D.
-    // This function actually calculates (d*sin(theta))^2
-    // which only equals d^2 when sin(theta) = 1
-    pub fn distance_squared<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Join<G2, Output: NormSquared<Output = SCALAR>>,
-    {
-        g1.join(g2).norm_squared()
-    }
-
-    /// Computes the (signed) distance between two normalized geometric entities
-    /// such as two points, or a point and a line in 2D.
-    ///
-    /// Some kinds of entities will produce a distance that is always positive,
-    /// such as the distance between points.
-    /// Others will produce a signed distance,
-    /// such as the distance between a point and a plane in 3D.
-
-    pub fn distance<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Join<G2, Output: Norm<Output = SCALAR>>,
-    {
-        g1.join(g2).norm()
-    }
-
-    pub fn skew_distance_squared<G1: Copy, G2: Copy, SCALAR: Copy + Ring>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Join<G2, Output: NormSquared<Output = SCALAR>>,
-        G1: Commutator<G2, Output: NormSquared<Output = SCALAR>>,
-        SCALAR: core::ops::Div<SCALAR, Output = SCALAR>,
-    {
-        let d_sin_sq = g1.join(g2).norm_squared();
-        let sin_sq = g1.cross(g2).norm_squared();
-        d_sin_sq / sin_sq
-    }
-
-    pub fn skew_distance<G1: Copy, G2: Copy, SCALAR: Copy + Ring>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Join<G2, Output: Norm<Output = SCALAR>>,
-        G1: Commutator<G2, Output: Norm<Output = SCALAR>>,
-        SCALAR: core::ops::Div<SCALAR, Output = SCALAR>,
-    {
-        let d_sin = g1.join(g2).norm();
-        let sin = g1.cross(g2).norm();
-        d_sin / sin
-    }
-
-    //pub fn distance<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    //where
-    //    G1: Commutator<G2>,
-    //    <G1 as Commutator<G2>>::Output: GeometricINorm<Output = SCALAR> + Copy,
-    //{
-    //    g1.cross(g2).geometric_inorm()
-    //}
-
-    //pub fn dist2<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    //where
-    //    G1: Commutator<G2>,
-    //    <G1 as Commutator<G2>>::Output: GeometricINorm + GeometricNorm + Copy,
-    //    <<G1 as Commutator<G2>>::Output as GeometricINorm>::Output:
-    //        core::ops::Div<<<G1 as Commutator<G2>>::Output as GeometricNorm>::Output, Output = SCALAR>,
-    //{
-    //    let c = g1.cross(g2);
-    //    c.geometric_inorm() / c.geometric_norm()
-    //}
-
-    /// Computes the squared distance between two normalized parallel geometric entities
-    /// such as two parallel lines in 2D, or a plane and parallel line in 3D.
-    pub fn parallel_distance_squared<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Meet<G2, Output: INormSquared<Output = SCALAR>>,
-    {
-        (g1.meet(g2)).inorm_squared()
-    }
-
-    /// Computes the (signed) distance between two normalized parallel geometric entities
-    /// such as two parallel lines in 2D, or a plane and parallel line in 3D.
-    pub fn parallel_distance<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Meet<G2, Output: INorm<Output = SCALAR>>,
-    {
-        (g1.meet(g2)).inorm()
-    }
-
-    /// Computes the (4-quadrant) angle between two normalized geometric entities
-    /// such as two lines in 2D, or two planes in 3D
-    pub fn angle<G1, G2, SCALAR>(g1: G1, g2: G2) -> SCALAR
-    where
-        G1: Copy,
-        G2: Copy,
-        G1: Dot<G2, Output = SCALAR>,
-        G1: Meet<G2, Output: Norm<Output = SCALAR>>,
-        SCALAR: InvTrig,
-    {
-        g1.meet(g2).norm().atan2(g1.dot(g2))
-    }
 }
 
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Commutator, Dot, Exp, GeometricINormSquared, GeometricNormSquared, Hat, INormSquared, Join,
-        Meet, Norm, NormSquared, Transform,
+        Commutator, Dot, Exp, GeometricInfNormSquared, GeometricNormSquared, Hat, InfNorm, Join,
+        Meet, Norm, NormSquared, PartialNorm, Transform,
     };
-    use super::metric::{angle, distance, skew_distance};
-    use super::scalar::{Ring, Sqrt};
+    use super::scalar::{PartialSqrt, Ring, Sqrt};
     use super::{pga2d, pga3d};
     use core::ops::{Div, Mul};
 
@@ -568,13 +469,34 @@ mod test {
         }
     }
 
-    impl<B: Copy + Norm<Output: Ring> + Mul<<B as Norm>::Output, Output = B>> Hat for B
+    impl<B: Copy + Norm<Output: Ring> + Mul<<B as PartialNorm>::Output, Output = B>> Hat for B
     where
-        <B as Norm>::Output: Div<<B as Norm>::Output, Output = <B as Norm>::Output>,
+        <B as PartialNorm>::Output:
+            Div<<B as PartialNorm>::Output, Output = <B as PartialNorm>::Output>,
     {
         type Output = Self;
         fn hat(self) -> Self {
-            self * (<B as Norm>::Output::one() / self.norm())
+            self * (<B as PartialNorm>::Output::one() / self.norm())
+        }
+    }
+
+    impl<T: Ring + Sqrt<Output = T> + core::ops::Div<Output = T>> PartialSqrt for pga3d::Magnitude<T> {
+        type Output = pga3d::Magnitude<T>;
+
+        fn partial_sqrt(self) -> Option<pga3d::Magnitude<T>> {
+            let pga3d::Magnitude { a: s, a0123: p } = self;
+            let sqrt_s = s.sqrt();
+            // This may divide by zero, but we ignore it for the purposes of unit testing
+            Some(pga3d::Magnitude {
+                a: sqrt_s,
+                a0123: p / (sqrt_s + sqrt_s),
+            })
+        }
+    }
+
+    impl<T: Ring + Sqrt<Output = T> + core::ops::Div<Output = T>> Sqrt for pga3d::Magnitude<T> {
+        fn sqrt(self) -> pga3d::Magnitude<T> {
+            self.partial_sqrt().unwrap()
         }
     }
 
@@ -590,21 +512,19 @@ mod test {
     }
 
     #[test]
-    fn test_dist() {
+    fn test_dist_2d() {
         // Distance between points
+        // Joining the points results in a line whose norm is their unsigned distance
         {
             let p1 = pga2d::point::<f32>([10., 10.]);
             let p2 = pga2d::point([13., 14.]);
 
             assert_close!(p1.join(p2).norm(), 5.);
         }
+
+        // Signed distance between point & line
+        // Joining the line & point results in a plane (scalar) corresponding to their signed distance
         {
-            let p1 = pga3d::point::<f32>([10., 10., 10.]);
-            let p2 = pga3d::point([13., 14., 10.]);
-            assert_close!(p1.join(p2).norm(), 5.);
-        }
-        {
-            // Signed distance between point & line
             // Note that the line and the test point form a triangle that is wound
             // left-handed, producing a negative distance
             let l = pga2d::point::<f32>([10., 10.])
@@ -612,6 +532,16 @@ mod test {
                 .hat();
             let p = pga2d::point([15., 15.]);
             assert_close!(l.join(p).norm(), -5.);
+        }
+
+        // Distance between parallel lines
+        // The lines meet at an infinite point whose infinite norm is their unsigned distance
+        {
+            let l1 = pga2d::origin::<f32>().join(pga2d::point([3., 4.])).hat();
+            let l2 = pga2d::point::<f32>([4., -3.])
+                .join(pga2d::point([7., 1.]))
+                .hat();
+            assert_close!(dbg!(l1.meet(l2)).inf_norm(), 5.);
         }
     }
 
@@ -634,17 +564,37 @@ mod test {
             .join(pga3d::point([10., 0., 0.]))
             .join(pga3d::point([0., 10., 0.]))
             .hat();
-        distance(pt, plane_xy); // GOOD
-        distance(pt, plane_xy); // GOOD
-        distance(pga3d::origin(), pt); // GOOD
-        distance(pt, line_z); // GOOD
+        let line_z2_ish = pga3d::point::<f32>([3., 4., 10.])
+            .join(pga3d::point([3.1, 4.1, 15.]))
+            .hat();
+        //distance(pt, plane_xy); // GOOD
+        //distance(pt, plane_xy); // GOOD
+        //distance(pga3d::origin(), pt); // GOOD
+        //distance(pt, line_z); // GOOD
 
-        distance(pt, line_skew); // GOOD
-        dbg!(distance(line_z, line_skew)); // BAD
-        dbg!(distance(line_z, line_skew)); // BAD
+        //distance(pt, line_skew); // GOOD
+        //dbg!(distance(line_z, line_skew)); // BAD
+        //dbg!(distance(line_z, line_skew)); // BAD
 
-        let l1 = line_z2;
-        let l2 = line_skew;
+        {
+            for i in 0..50 {
+                let line_z = pga3d::point::<f32>([3., 4., 0.])
+                    .join(pga3d::point([3., 4., 10.]))
+                    .hat();
+
+                let x = -(2_f32.powi(-5 * i));
+                let line_z2_ish = pga3d::origin().join(pga3d::point([x, 0., 1.])).hat();
+
+                dbg!(x);
+                dbg!(line_z);
+                dbg!(line_z2_ish);
+                dbg!(line_z.cross(line_z2_ish).geometric_norm_squared().sqrt());
+                dbg!(line_z.cross(line_z2_ish).inf_norm());
+            }
+        }
+
+        let l1 = line_z;
+        let l2 = line_z2_ish;
 
         //let l1 = pga3d::point::<f32>([10., 10., 10.]);
         //let l2 = pga3d::point([13., 14., 10.]);
@@ -657,22 +607,23 @@ mod test {
 
         // AAAA
         let norm = dbg!(crossed.geometric_norm_squared().sqrt());
-        dbg!(crossed.geometric_inorm_squared().sqrt());
+        dbg!(crossed.geometric_inf_norm_squared().sqrt());
+        dbg!(crossed.norm());
+        dbg!(crossed.inf_norm());
 
-        let d_cos_sq = dbg!(crossed.inorm_squared());
         let d_cos_sq = dbg!(norm.a0123 * norm.a0123);
         let d_sin_sq = joined.norm_squared();
         dbg!((dbg!(d_cos_sq) + dbg!(d_sin_sq)).sqrt());
-        dbg!(skew_distance(line_z, line_skew));
-        dbg!(skew_distance(line_z, line_z2));
-        dbg!(skew_distance(line_z, line_x));
-        dbg!(skew_distance(line_z2, line_x));
-        dbg!(skew_distance(line_x, line_skew));
+        //dbg!(skew_distance(line_z, line_skew));
+        //dbg!(skew_distance(line_z, line_z2));
+        //dbg!(skew_distance(line_z, line_x));
+        //dbg!(skew_distance(line_z2, line_x));
+        //dbg!(skew_distance(line_x, line_skew));
 
-        //assert_close!(ua.meet(ua).geometric_inorm(), 0.);
-        //assert_close!(via.meet(via).geometric_inorm(), 0.);
+        //assert_close!(ua.meet(ua).geometric_inf_norm(), 0.);
+        //assert_close!(via.meet(via).geometric_inf_norm(), 0.);
 
-        //dbg!(dbg!(via.geometric_inorm_squared()) + dbg!(l1.meet(l2).geometric_inorm_squared()));
+        //dbg!(dbg!(via.geometric_inf_norm_squared()) + dbg!(l1.meet(l2).geometric_inf_norm_squared()));
         // AAAA
 
         //dbg!(ua.meet(ua));
@@ -692,9 +643,9 @@ mod test {
         //dbg!(line_z.cross(line_x));
         //dbg!(line_z.cross(line_skew));
         //dbg!(line_z.cross(line_skew).geometric_norm());
-        //dbg!(line_z.cross(line_skew).geometric_inorm());
+        //dbg!(line_z.cross(line_skew).geometric_inf_norm());
         //dbg!(line_z.cross(line_skew).hat());
-        //dbg!(line_z.cross(line_skew).hat().geometric_inorm());
+        //dbg!(line_z.cross(line_skew).hat().geometric_inf_norm());
 
         //dbg!(line_z);
         //dbg!(line_x);
@@ -732,7 +683,7 @@ mod test {
         dbg!(u);
         dbg!(v);
         //dbg!(b.geometric_norm());
-        //dbg!(b.geometric_inorm());
+        //dbg!(b.geometric_inf_norm());
         let log_b = dbg!(b * u + v * b);
         dbg!(log_b.exp());
 
@@ -755,43 +706,65 @@ mod test {
     #[test]
     fn test_dist_3d() {
         // Distance between points
-        assert_close!(
-            distance(pga3d::point([10., 10., 10.]), pga3d::point([13., 14., 10.])),
-            5.
-        );
+        // Joining the points results in a line whose norm is their unsigned distance
+        {
+            let p1 = pga3d::point::<f32>([10., 10., 10.]);
+            let p2 = pga3d::point([13., 14., 10.]);
+            assert_close!(p1.join(p2).norm(), 5.);
+        }
 
         // Distance between point & line
-        assert_close!(
-            distance(
-                pga3d::point::<f32>([10., 10., 10.])
-                    .join(pga3d::point([10., 20., 10.]))
-                    .hat(),
-                pga3d::point([15., 15., 10.])
-            ),
-            5.
-        );
-        assert_close!(
-            distance(
-                pga3d::point::<f32>([10., 10., 0.])
-                    .join(pga3d::point([10., 10., 20.]))
-                    .hat(),
-                pga3d::point([13., 14., 10.])
-            ),
-            5.
-        );
+        // Joining the line & point results in a plane whose norm is their unsigned distance
+        {
+            let l = pga3d::point::<f32>([10., 10., 10.])
+                .join(pga3d::point([10., 20., 10.]))
+                .hat();
+            let p = pga3d::point([15., 15., 10.]);
+            assert_close!(l.join(p).norm(), 5.);
+        }
 
-        // Signed distance between point & plane
-        // Note how triangle is wound left-handed WRT the point, to produce a negative distance
-        assert_close!(
-            distance(
-                pga3d::point::<f32>([10., 10., 10.])
-                    .join(pga3d::point([10., 20., 10.]))
-                    .join(pga3d::point([20., 10., 10.]))
-                    .hat(),
-                pga3d::point([15., 15., 15.])
-            ),
-            -5.
-        );
+        {
+            let l = pga3d::point::<f32>([10., 10., 0.])
+                .join(pga3d::point([10., 10., 20.]))
+                .hat();
+            let p = pga3d::point([13., 14., 10.]);
+            assert_close!(l.join(p).norm(), 5.);
+        }
+
+        // Distance between point & plane
+        // Joining the plane & point results in a volume (scalar) corresponding to their signed distance
+        {
+            let pl = pga3d::point::<f32>([10., 10., 10.])
+                .join(pga3d::point([10., 20., 10.]))
+                .join(pga3d::point([20., 10., 10.]))
+                .hat();
+            let pt = pga3d::point([15., 15., 15.]);
+            assert_close!(pl.join(pt), -5.);
+        }
+
+        // Distance between parallel lines
+        {
+            let l1 = pga3d::origin::<f32>()
+                .join(pga3d::point([0., 0., 10.]))
+                .hat();
+            let l2 = pga3d::point::<f32>([3., 4., 10.])
+                .join(pga3d::point([3., 4., 20.]))
+                .hat();
+            assert_close!(dbg!(l1.cross(l2)).inf_norm(), 5.);
+        }
+
+        // Distance between perpendicular lines
+        {
+            let l1 = pga3d::origin::<f32>()
+                .join(pga3d::point([0., 0., 10.]))
+                .hat();
+            let l2 = pga3d::point::<f32>([8., 0., 15.])
+                .join(pga3d::point([8., 20., 15.]))
+                .hat();
+            assert_close!(dbg!(l1.join(l2)), 8.);
+        }
+
+        // Distance between skew lines
 
         // Closest distance between two lines
         //assert_close!(
@@ -816,6 +789,7 @@ mod test {
         //);
     }
 
+    /*
     #[test]
     fn test_angle() {
         // Angle between lines in 2D
@@ -857,6 +831,7 @@ mod test {
             )
         }
     }
+    */
 
     #[test]
     fn motor() {
