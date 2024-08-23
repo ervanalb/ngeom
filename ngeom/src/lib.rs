@@ -21,22 +21,12 @@ pub mod scalar {
         fn atan2(self, other: Self) -> Self;
     }
 
-    pub trait PartialSqrt: Sized {
-        type Output;
-
-        fn partial_sqrt(self) -> Option<Self::Output>;
+    pub trait Sqrt {
+        fn sqrt(self) -> Self;
     }
 
-    pub trait Sqrt: PartialSqrt {
-        fn sqrt(self) -> Self::Output;
-    }
-
-    pub trait PartialInv: Sized {
-        fn partial_inv(self) -> Option<Self>;
-    }
-
-    pub trait PartialInvSqrt: Sized {
-        fn partial_inv_sqrt(self) -> Option<Self>;
+    pub trait Recip: Sized {
+        fn recip(self) -> Self;
     }
 
     macro_rules! impl_for_float {
@@ -50,17 +40,15 @@ pub mod scalar {
                 }
             }
 
-            impl PartialSqrt for $type {
-                type Output = $type;
-
-                fn partial_sqrt(self) -> Option<$type> {
-                    Some(self.sqrt())
+            impl Sqrt for $type {
+                fn sqrt(self) -> $type {
+                    self.sqrt()
                 }
             }
 
-            impl Sqrt for $type {
-                fn sqrt(self) -> $type {
-                    self.partial_sqrt().unwrap()
+            impl Recip for $type {
+                fn recip(self) -> $type {
+                    self.recip()
                 }
             }
 
@@ -120,12 +108,8 @@ pub mod blade {
         fn norm_squared(self) -> Self::Output;
     }
 
-    pub trait PartialNorm {
+    pub trait Norm {
         type Output;
-        fn partial_norm(self) -> Option<Self::Output>;
-    }
-
-    pub trait Norm: PartialNorm {
         fn norm(self) -> Self::Output;
     }
 
@@ -134,12 +118,8 @@ pub mod blade {
         fn geometric_norm_squared(self) -> Self::Output;
     }
 
-    pub trait PartialGeometricNorm {
+    pub trait GeometricNorm {
         type Output;
-        fn partial_geometric_norm(self) -> Option<Self::Output>;
-    }
-
-    pub trait GeometricNorm: PartialGeometricNorm {
         fn geometric_norm(self) -> Self::Output;
     }
 
@@ -148,12 +128,8 @@ pub mod blade {
         fn inf_norm_squared(self) -> Self::Output;
     }
 
-    pub trait PartialInfNorm {
+    pub trait InfNorm {
         type Output;
-        fn partial_inf_norm(self) -> Option<Self::Output>;
-    }
-
-    pub trait InfNorm: PartialInfNorm {
         fn inf_norm(self) -> Self::Output;
     }
 
@@ -162,12 +138,8 @@ pub mod blade {
         fn geometric_inf_norm_squared(self) -> Self::Output;
     }
 
-    pub trait PartialGeometricInfNorm {
+    pub trait GeometricInfNorm {
         type Output;
-        fn partial_geometric_inf_norm(self) -> Option<Self::Output>;
-    }
-
-    pub trait GeometricInfNorm: PartialGeometricInfNorm {
         fn geometric_inf_norm(self) -> Self::Output;
     }
 
@@ -209,21 +181,7 @@ pub mod blade {
     }
 
     pub trait Hat {
-        // Typically, the .hat() function returns Self,
-        // but since normalizing a blade is not exception-free,
-        // the output type is left to the implementer
-        // so they may choose Option<Self> or similar.
-        type Output;
-        fn hat(self) -> Self::Output;
-    }
-
-    pub trait IHat {
-        // Typically, the .ihat() function returns Self,
-        // but since normalizing a blade is not exception-free,
-        // the output type is left to the implementer
-        // so they may choose Option<Self> or similar.
-        type Output;
-        fn ihat(self) -> Self::Output;
+        fn hat(self) -> Self;
     }
 
     macro_rules! impl_for_builtin {
@@ -235,14 +193,8 @@ pub mod blade {
                 }
             }
 
-            impl PartialNorm for $type {
-                type Output = $type;
-                fn partial_norm(self) -> Option<$type> {
-                    Some(self)
-                }
-            }
-
             impl Norm for $type {
+                type Output = $type;
                 fn norm(self) -> $type {
                     self
                 }
@@ -255,14 +207,8 @@ pub mod blade {
                 }
             }
 
-            impl PartialGeometricNorm for $type {
-                type Output = $type;
-                fn partial_geometric_norm(self) -> Option<$type> {
-                    Some(self)
-                }
-            }
-
             impl GeometricNorm for $type {
+                type Output = $type;
                 fn geometric_norm(self) -> $type {
                     self
                 }
@@ -282,11 +228,10 @@ pub mod blade {
 pub mod pga2d {
     use crate::blade::{
         Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
-        PartialGeometricInfNorm, PartialGeometricNorm, PartialInfNorm, PartialNorm, Project,
+        GeometricNormSquared, Hat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared, Project,
         Reflect, Reverse, Transform,
     };
-    use crate::scalar::{PartialSqrt, Ring, Sqrt, Trig};
+    use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1);
@@ -294,7 +239,7 @@ pub mod pga2d {
     impl<T: Ring + Sqrt + Trig> Exp for Bivector<T> {
         type Output = Even<T>;
         fn exp(self) -> Even<T> {
-            // This formula works because a normalized bivector squares to -1
+            // This formula works because a normalized simple bivector squares to -1
             // allowing us to treat it like the imaginary unit
             let theta = self.norm();
             self * theta.sinc() + theta.cos()
@@ -351,11 +296,10 @@ pub mod pga2d {
 pub mod pga3d {
     use crate::blade::{
         Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
-        PartialGeometricInfNorm, PartialGeometricNorm, PartialInfNorm, PartialNorm, Project,
+        GeometricNormSquared, Hat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared, Project,
         Reflect, Reverse, Transform,
     };
-    use crate::scalar::{PartialSqrt, Ring, Sqrt, Trig};
+    use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1, 1);
@@ -370,6 +314,18 @@ pub mod pga3d {
             // allowing us to treat it like the imaginary unit
             let theta = self.norm();
             self * theta.sinc() + theta.cos()
+        }
+    }
+
+    impl<T: Ring + Sqrt + Recip> Magnitude<T> {
+        pub fn rsqrt(self) -> Magnitude<T> {
+            let Magnitude { a: s, a0123: p } = self;
+            let sqrt_s = s.sqrt();
+            let sqrt_s_cubed = s * sqrt_s;
+            Magnitude {
+                a: sqrt_s.recip(),
+                a0123: p * (sqrt_s_cubed + sqrt_s_cubed).recip(),
+            }
         }
     }
 
@@ -427,12 +383,9 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Commutator, Dot, Exp, GeometricInfNormSquared, GeometricNormSquared, Hat, InfNorm, Join,
-        Meet, Norm, NormSquared, PartialNorm, Transform,
+        Commutator, Dot, Exp, Hat, InfNorm, Join, Meet, Norm, NormSquared, Transform,
     };
-    use super::scalar::{PartialSqrt, Ring, Sqrt};
     use super::{pga2d, pga3d};
-    use core::ops::{Div, Mul};
 
     macro_rules! assert_close {
         ($left:expr, $right:expr $(,)?) => {
@@ -466,37 +419,6 @@ mod test {
         fn is_close(self, rhs: G) -> bool {
             let tol = 1e-5;
             (self.join(rhs)).norm_squared() < tol * tol
-        }
-    }
-
-    impl<B: Copy + Norm<Output: Ring> + Mul<<B as PartialNorm>::Output, Output = B>> Hat for B
-    where
-        <B as PartialNorm>::Output:
-            Div<<B as PartialNorm>::Output, Output = <B as PartialNorm>::Output>,
-    {
-        type Output = Self;
-        fn hat(self) -> Self {
-            self * (<B as PartialNorm>::Output::one() / self.norm())
-        }
-    }
-
-    impl<T: Ring + Sqrt<Output = T> + core::ops::Div<Output = T>> PartialSqrt for pga3d::Magnitude<T> {
-        type Output = pga3d::Magnitude<T>;
-
-        fn partial_sqrt(self) -> Option<pga3d::Magnitude<T>> {
-            let pga3d::Magnitude { a: s, a0123: p } = self;
-            let sqrt_s = s.sqrt();
-            // This may divide by zero, but we ignore it for the purposes of unit testing
-            Some(pga3d::Magnitude {
-                a: sqrt_s,
-                a0123: p / (sqrt_s + sqrt_s),
-            })
-        }
-    }
-
-    impl<T: Ring + Sqrt<Output = T> + core::ops::Div<Output = T>> Sqrt for pga3d::Magnitude<T> {
-        fn sqrt(self) -> pga3d::Magnitude<T> {
-            self.partial_sqrt().unwrap()
         }
     }
 
@@ -588,7 +510,7 @@ mod test {
                 dbg!(x);
                 dbg!(line_z);
                 dbg!(line_z2_ish);
-                dbg!(line_z.cross(line_z2_ish).geometric_norm_squared().sqrt());
+                //dbg!(line_z.cross(line_z2_ish).geometric_norm_squared().sqrt());
                 dbg!(line_z.cross(line_z2_ish).inf_norm());
             }
         }
@@ -606,14 +528,14 @@ mod test {
         let joined = l1.join(l2);
 
         // AAAA
-        let norm = dbg!(crossed.geometric_norm_squared().sqrt());
-        dbg!(crossed.geometric_inf_norm_squared().sqrt());
+        //let norm = dbg!(crossed.geometric_norm_squared().sqrt());
+        //dbg!(crossed.geometric_inf_norm_squared().sqrt());
         dbg!(crossed.norm());
         dbg!(crossed.inf_norm());
 
-        let d_cos_sq = dbg!(norm.a0123 * norm.a0123);
-        let d_sin_sq = joined.norm_squared();
-        dbg!((dbg!(d_cos_sq) + dbg!(d_sin_sq)).sqrt());
+        //let d_cos_sq = dbg!(norm.a0123 * norm.a0123);
+        //let d_sin_sq = joined.norm_squared();
+        //dbg!((dbg!(d_cos_sq) + dbg!(d_sin_sq)).sqrt());
         //dbg!(skew_distance(line_z, line_skew));
         //dbg!(skew_distance(line_z, line_z2));
         //dbg!(skew_distance(line_z, line_x));
@@ -750,7 +672,7 @@ mod test {
             let l2 = pga3d::point::<f32>([3., 4., 10.])
                 .join(pga3d::point([3., 4., 20.]))
                 .hat();
-            assert_close!(dbg!(l1.cross(l2)).inf_norm(), 5.);
+            assert_close!(l1.cross(l2).inf_norm(), 5.);
         }
 
         // Distance between perpendicular lines
@@ -761,32 +683,20 @@ mod test {
             let l2 = pga3d::point::<f32>([8., 0., 15.])
                 .join(pga3d::point([8., 20., 15.]))
                 .hat();
-            assert_close!(dbg!(l1.join(l2)), 8.);
+            assert_close!(l1.join(l2), 8.);
         }
 
         // Distance between skew lines
+        {
+            let l1 = pga3d::origin::<f32>()
+                .join(pga3d::point([0., 0., 10.]))
+                .hat();
+            let l2 = pga3d::point([10., 0., 0.])
+                .join(pga3d::point([10., 5., 4.]))
+                .hat();
 
-        // Closest distance between two lines
-        //assert_close!(
-        //    dist(
-        //        pga3d::origin::<f32>()
-        //            .join(pga3d::point([0., 0., 10.]))
-        //            .hat(),
-        //        pga3d::point([5., 0., 0.])
-        //            .join(pga3d::point([5., 1., 1.]))
-        //            .hat(),
-        //    ),
-        //    5.
-        //);
-
-        // Parallel lines
-        //assert_close!(
-        //    dist(
-        //        pga3d::origin::<f32>().join(pga3d::point([0., 0., 10.])).hat(),
-        //        pga3d::point([3., 4., 10.]).join(pga3d::point([3., 4., 20.])).hat(),
-        //    ),
-        //    5.
-        //);
+            assert_close!(l1.join(l2) * l1.cross(l2).norm().recip(), 10.)
+        }
     }
 
     /*

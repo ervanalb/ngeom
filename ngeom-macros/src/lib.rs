@@ -514,7 +514,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
         obj: &Object,
         expressions: &[SymbolicSumExpr],
         output_self: bool,
-        output_option: bool,
     ) -> TokenStream {
         if obj.is_scalar {
             // Do not generate operations with the scalar being the LHS--
@@ -612,15 +611,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
             quote! {}
         } else {
             quote! { type Output = #output_type_name; }
-        };
-
-        let (output_type_name, return_expr) = if output_option {
-            (
-                quote! { Option < #output_type_name > },
-                quote! { Some( #return_expr ) },
-            )
-        } else {
-            (quote! { #output_type_name }, quote! { #return_expr })
         };
 
         quote! {
@@ -1122,7 +1112,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 &generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| (-1, i)),
                 false, // output_self
-                false, // output_option
             );
 
             // Add a method A.reverse()
@@ -1138,7 +1127,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     (coef, i)
                 }),
                 true, // output_self
-                false, // output_option
                 );
 
             // Add a method A.dual()
@@ -1148,7 +1136,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // to produce a valid complement
             let dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| (1, basis.len() - i - 1));
             let dual_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &dual_expressions, false, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &dual_expressions, false);
 
             // Add a method A.geometric_norm_squared()
             let op_trait = quote! { GeometricNormSquared };
@@ -1169,45 +1157,27 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let geometric_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, geometric_norm_product_f, false);
             let geometric_norm_squared_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &geometric_norm_squared_expressions
-                    , false, false);
+                    , false);
 
             let geometric_norm_code = if !geometric_norm_squared_code.is_empty() {
                 // Add a method A.geometric_norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { PartialGeometricNorm };
-                let op_fn = Ident::new("partial_geometric_norm", Span::call_site());
+                let op_trait = quote! { GeometricNorm };
+                let op_fn = Ident::new("geometric_norm", Span::call_site());
                 let geometric_norm_code =
                     gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, geometric_norm_product_f, true)
-                        , false, true);
+                        , false);
                 if !geometric_norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt,
-                    // which means partial_geometric_norm() unconditionally works.
-                    // and we can add an implementation for GeometricNorm
-
-                    let type_name = obj.type_name();
-                    quote! {
-                        #geometric_norm_code
-
-                        impl < T: Ring > GeometricNorm for #type_name {
-                            fn geometric_norm (self) -> T {
-                                self.partial_geometric_norm().unwrap()
-                            }
-                        }
-                    }
+                    // We found a way to symbolically take the sqrt
+                    geometric_norm_code
                 } else {
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring > PartialGeometricNorm for #type_name
-                            where <Self as GeometricNormSquared>::Output: PartialSqrt {
-                            type Output = <<Self as GeometricNormSquared>::Output as PartialSqrt>::Output;
-
-                            fn partial_geometric_norm (self) -> Option<Self::Output> {
-                                self.geometric_norm_squared().partial_sqrt()
-                            }
-                        }
                         impl < T: Ring > GeometricNorm for #type_name
                             where <Self as GeometricNormSquared>::Output: Sqrt {
-                            fn geometric_norm (self) -> <Self as PartialGeometricNorm>::Output {
+                            type Output = <Self as GeometricNormSquared>::Output;
+
+                            fn geometric_norm (self) -> Self::Output {
                                 self.geometric_norm_squared().sqrt()
                             }
                         }
@@ -1243,45 +1213,27 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, norm_product_f, false);
             let norm_squared_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &norm_squared_expressions
-                    , false, false);
+                    , false);
 
             let norm_code = if !norm_squared_code.is_empty() {
                 // Add a method A.norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { PartialNorm };
-                let op_fn = Ident::new("partial_norm", Span::call_site());
+                let op_trait = quote! { Norm };
+                let op_fn = Ident::new("norm", Span::call_site());
                 let norm_code =
                     gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, norm_product_f, true)
-                        , false, true);
+                        , false);
                 if !norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt,
-                    // which means partial_norm() unconditionally works.
-                    // and we can add an implementation for Norm
-
-                    let type_name = obj.type_name();
-                    quote! {
-                        #norm_code
-
-                        impl < T: Ring > Norm for #type_name {
-                            fn norm (self) -> T {
-                                self.partial_norm().unwrap()
-                            }
-                        }
-                    }
+                    // We found a way to symbolically take the sqrt
+                    norm_code
                 } else {
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring > PartialNorm for #type_name
-                            where <Self as NormSquared>::Output: PartialSqrt {
-                            type Output = <<Self as NormSquared>::Output as PartialSqrt>::Output;
+                        impl < T: Ring + Sqrt > Norm for #type_name
+                            where <Self as InfNormSquared>::Output: Sqrt {
+                            type Output = <Self as InfNormSquared>::Output;
 
-                            fn partial_norm (self) -> Option<Self::Output> {
-                                self.norm_squared().partial_sqrt()
-                            }
-                        }
-                        impl < T: Ring > Norm for #type_name
-                            where <Self as NormSquared>::Output: Sqrt {
-                            fn norm (self) -> <Self as PartialNorm>::Output {
+                            fn norm (self) -> Self::Output {
                                 self.norm_squared().sqrt()
                             }
                         }
@@ -1297,45 +1249,27 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let geometric_inf_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, geometric_inf_norm_product_f, false);
             let geometric_inf_norm_squared_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &geometric_inf_norm_squared_expressions
-                    , false, false);
+                    , false);
 
             let geometric_inf_norm_code = if !geometric_inf_norm_squared_code.is_empty() {
                 // Add a method A.geometric_inf_norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { PartialGeometricInfNorm };
-                let op_fn = Ident::new("partial_geometric_inf_norm", Span::call_site());
+                let op_trait = quote! { GeometricInfNorm };
+                let op_fn = Ident::new("geometric_inf_norm", Span::call_site());
                 let geometric_inf_norm_code =
                     gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, geometric_inf_norm_product_f, true)
-                        , false, true);
+                        , false);
                 if !geometric_inf_norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt,
-                    // which means partial_geometric_inf_norm() unconditionally works.
-                    // and we can add an implementation for GeometricInfNorm
-
-                    let type_name = obj.type_name();
-                    quote! {
-                        #geometric_inf_norm_code
-
-                        impl < T: Ring > GeometricInfNorm for #type_name {
-                            fn geometric_inf_norm (self) -> T {
-                                self.partial_geometric_inf_norm().unwrap()
-                            }
-                        }
-                    }
+                    // We found a way to symbolically take the sqrt
+                    geometric_inf_norm_code
                 } else {
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring > PartialGeometricInfNorm for #type_name
-                            where <Self as GeometricInfNormSquared>::Output: PartialSqrt {
-                            type Output = <<Self as GeometricInfNormSquared>::Output as PartialSqrt>::Output;
-
-                            fn partial_geometric_inf_norm (self) -> Option<Self::Output> {
-                                self.geometric_inf_norm_squared().partial_sqrt()
-                            }
-                        }
                         impl < T: Ring > GeometricInfNorm for #type_name
                             where <Self as GeometricInfNormSquared>::Output: Sqrt {
-                            fn geometric_inf_norm (self) -> <Self as PartialGeometricInfNorm>::Output {
+                            type Output = <Self as GeometricInfNormSquared>::Output;
+
+                            fn geometric_inf_norm (self) -> Self::Output {
                                 self.geometric_inf_norm_squared().sqrt()
                             }
                         }
@@ -1351,45 +1285,27 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let inf_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, inf_norm_product_f, false);
 
             let inf_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &inf_norm_squared_expressions, false, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &inf_norm_squared_expressions, false);
 
             let inf_norm_code = if !inf_norm_squared_code.is_empty() {
                 // Add a method A.inf_norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { PartialInfNorm };
-                let op_fn = Ident::new("partial_inf_norm", Span::call_site());
+                let op_trait = quote! { InfNorm };
+                let op_fn = Ident::new("inf_norm", Span::call_site());
                 let inf_norm_code =
                     gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, inf_norm_product_f, true)
-                        , false, true);
+                        , false);
                 if !inf_norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt,
-                    // which means partial_inf_norm() unconditionally works.
-                    // and we can add an implementation for InfNorm
-
-                    let type_name = obj.type_name();
-                    quote! {
-                        #inf_norm_code
-
-                        impl < T: Ring > InfNorm for #type_name {
-                            fn inf_norm (self) -> T {
-                                self.partial_inf_norm().unwrap()
-                            }
-                        }
-                    }
+                    // We found a way to symbolically take the sqrt
+                    inf_norm_code
                 } else {
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring > PartialInfNorm for #type_name
-                            where <Self as InfNormSquared>::Output: PartialSqrt {
-                            type Output = <<Self as InfNormSquared>::Output as PartialSqrt>::Output;
-
-                            fn partial_inf_norm (self) -> Option<Self::Output> {
-                                self.inf_norm_squared().partial_sqrt()
-                            }
-                        }
-                        impl < T: Ring > InfNorm for #type_name
+                        impl < T: Ring + Sqrt > InfNorm for #type_name
                             where <Self as InfNormSquared>::Output: Sqrt {
-                            fn inf_norm (self) -> <Self as PartialInfNorm>::Output {
+                            type Output = <Self as InfNormSquared>::Output;
+
+                            fn inf_norm (self) -> Self::Output {
                                 self.inf_norm_squared().sqrt()
                             }
                         }
@@ -1397,6 +1313,23 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             } else {
                 quote! {}  // There is no squared norm, so return no impls for norm
+            };
+
+            // Implement .hat() which divides by the norm
+            let hat_code = if !obj.is_scalar {
+                let type_name = obj.type_name();
+                quote! {
+                    impl<T: Ring + Recip> Hat for #type_name
+                    where
+                        Self: Norm<Output=T>
+                    {
+                        fn hat(self) -> Self {
+                            self * self.norm().recip()
+                        }
+                    }
+                }
+            } else {
+                quote! {}
             };
 
             // Overload +
@@ -1694,6 +1627,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #inf_norm_code
                 #geometric_inf_norm_squared_code
                 #geometric_inf_norm_code
+                #hat_code
                 #add_code
                 #sub_code
                 #wedge_product_code
