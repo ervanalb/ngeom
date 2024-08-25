@@ -17,10 +17,6 @@ pub mod scalar {
         fn sinc(self) -> Self;
     }
 
-    pub trait InvTrig {
-        fn atan2(self, other: Self) -> Self;
-    }
-
     pub trait Sqrt {
         fn sqrt(self) -> Self;
     }
@@ -46,12 +42,6 @@ pub mod scalar {
                 }
             }
 
-            impl Recip for $type {
-                fn recip(self) -> $type {
-                    self.recip()
-                }
-            }
-
             impl Trig for $type {
                 fn cos(self) -> $type {
                     self.cos()
@@ -59,12 +49,6 @@ pub mod scalar {
                 fn sinc(self) -> $type {
                     let self_adj = self.abs() + $type::EPSILON;
                     self_adj.sin() / self_adj
-                }
-            }
-
-            impl InvTrig for $type {
-                fn atan2(self, other: $type) -> $type {
-                    self.atan2(other)
                 }
             }
         };
@@ -184,6 +168,10 @@ pub mod blade {
         fn hat(self) -> Self;
     }
 
+    pub trait InfHat {
+        fn inf_hat(self) -> Self;
+    }
+
     macro_rules! impl_for_builtin {
         ($type:ident) => {
             impl NormSquared for $type {
@@ -228,8 +216,8 @@ pub mod blade {
 pub mod pga2d {
     use crate::blade::{
         Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared, Project,
-        Reflect, Reverse, Transform,
+        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
+        Project, Reflect, Reverse, Transform,
     };
     use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -296,8 +284,8 @@ pub mod pga2d {
 pub mod pga3d {
     use crate::blade::{
         Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared, Project,
-        Reflect, Reverse, Transform,
+        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
+        Project, Reflect, Reverse, Transform,
     };
     use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -383,9 +371,16 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Commutator, Dot, Exp, Hat, InfNorm, Join, Meet, Norm, NormSquared, Transform,
+        Commutator, Exp, Hat, InfNorm, Join, Meet, Norm, NormSquared, Project, Transform,
     };
+    use super::scalar::Recip;
     use super::{pga2d, pga3d};
+
+    impl Recip for f32 {
+        fn recip(self) -> f32 {
+            self.recip()
+        }
+    }
 
     macro_rules! assert_close {
         ($left:expr, $right:expr $(,)?) => {
@@ -457,7 +452,9 @@ mod test {
         }
 
         // Distance between parallel lines
-        // The lines meet at an infinite point whose infinite norm is their unsigned distance
+        // The lines meet at an infinite point whose infinite norm is their unsigned distance.
+        // More precisely, this expression yields the distance between the projection of the
+        // origin onto each line.
         {
             let l1 = pga2d::origin::<f32>().join(pga2d::point([3., 4.])).hat();
             let l2 = pga2d::point::<f32>([4., -3.])
@@ -468,160 +465,30 @@ mod test {
     }
 
     #[test]
-    fn dot_product_fiddle() {
-        let pt = pga3d::point([5., 5., 5.]);
-        let line_z = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 0., 10.]))
-            .hat();
-        let line_z2 = pga3d::point::<f32>([3., 4., 10.])
-            .join(pga3d::point([3., 4., 15.]))
-            .hat();
-        let line_x = pga3d::origin::<f32>()
-            .join(pga3d::point([10., 0., 0.]))
-            .hat();
-        let line_skew = pga3d::point([10., 0., 0.])
-            .join(pga3d::point([10., 5., 4.]))
-            .hat();
-        let plane_xy = pga3d::point([0., 0., 0.])
-            .join(pga3d::point([10., 0., 0.]))
-            .join(pga3d::point([0., 10., 0.]))
-            .hat();
-        let line_z2_ish = pga3d::point::<f32>([3., 4., 10.])
-            .join(pga3d::point([3.1, 4.1, 15.]))
-            .hat();
-        //distance(pt, plane_xy); // GOOD
-        //distance(pt, plane_xy); // GOOD
-        //distance(pga3d::origin(), pt); // GOOD
-        //distance(pt, line_z); // GOOD
+    fn fiddle() {
+        for t in [0., 0.2, 0.4, 0.6, 0.8, 1.] {
+            let t = t * 0.25 * core::f32::consts::TAU;
+            dbg!(t);
+            let l1 = pga2d::point([0., 100.])
+                .join(pga2d::point([1., 100.]))
+                .hat();
+            let l2 = pga2d::point([0., 100.])
+                .join(pga2d::point([t.cos(), 100. + t.sin()]))
+                .hat();
 
-        //distance(pt, line_skew); // GOOD
-        //dbg!(distance(line_z, line_skew)); // BAD
-        //dbg!(distance(line_z, line_skew)); // BAD
+            let p1 = pga2d::origin().project(l1);
+            let p2 = pga2d::origin().project(l2);
+            dbg!(p1);
+            dbg!(p2);
+            dbg!(p1.join(p2).norm());
 
-        {
-            for i in 0..50 {
-                let line_z = pga3d::point::<f32>([3., 4., 0.])
-                    .join(pga3d::point([3., 4., 10.]))
-                    .hat();
+            // Distance between two support points that are perpendicular to the line and go through the origin
 
-                let x = -(2_f32.powi(-5 * i));
-                let line_z2_ish = pga3d::origin().join(pga3d::point([x, 0., 1.])).hat();
-
-                dbg!(x);
-                dbg!(line_z);
-                dbg!(line_z2_ish);
-                //dbg!(line_z.cross(line_z2_ish).geometric_norm_squared().sqrt());
-                dbg!(line_z.cross(line_z2_ish).inf_norm());
-            }
+            dbg!(l1);
+            dbg!(l2);
+            dbg!(l1.meet(l2).inf_norm());
         }
 
-        let l1 = line_z;
-        let l2 = line_z2_ish;
-
-        //let l1 = pga3d::point::<f32>([10., 10., 10.]);
-        //let l2 = pga3d::point([13., 14., 10.]);
-
-        //dbg!(l1.meet(l2));
-        //dbg!(l1.dot(l2));
-
-        let crossed = dbg!(l1.cross(l2));
-        let joined = l1.join(l2);
-
-        // AAAA
-        //let norm = dbg!(crossed.geometric_norm_squared().sqrt());
-        //dbg!(crossed.geometric_inf_norm_squared().sqrt());
-        dbg!(crossed.norm());
-        dbg!(crossed.inf_norm());
-
-        //let d_cos_sq = dbg!(norm.a0123 * norm.a0123);
-        //let d_sin_sq = joined.norm_squared();
-        //dbg!((dbg!(d_cos_sq) + dbg!(d_sin_sq)).sqrt());
-        //dbg!(skew_distance(line_z, line_skew));
-        //dbg!(skew_distance(line_z, line_z2));
-        //dbg!(skew_distance(line_z, line_x));
-        //dbg!(skew_distance(line_z2, line_x));
-        //dbg!(skew_distance(line_x, line_skew));
-
-        //assert_close!(ua.meet(ua).geometric_inf_norm(), 0.);
-        //assert_close!(via.meet(via).geometric_inf_norm(), 0.);
-
-        //dbg!(dbg!(via.geometric_inf_norm_squared()) + dbg!(l1.meet(l2).geometric_inf_norm_squared()));
-        // AAAA
-
-        //dbg!(ua.meet(ua));
-        //dbg!(via.meet(via));
-        //dbg!(ua + via);
-        //dbg!(ua.hat());
-        //dbg!(via.hat());
-
-        //let line_z2 = pga3d::point([5., 5., 5.])
-        //    .join(pga3d::point([5., 5., 15.]))
-        //    .hat();
-
-        //dbg!(line_z.join(line_skew));
-        //dbg!(line_z.meet(line_skew));
-        //dbg!(line_z.dot(line_skew));
-        //dbg!(line_z.cross(line_z2));
-        //dbg!(line_z.cross(line_x));
-        //dbg!(line_z.cross(line_skew));
-        //dbg!(line_z.cross(line_skew).geometric_norm());
-        //dbg!(line_z.cross(line_skew).geometric_inf_norm());
-        //dbg!(line_z.cross(line_skew).hat());
-        //dbg!(line_z.cross(line_skew).hat().geometric_inf_norm());
-
-        //dbg!(line_z);
-        //dbg!(line_x);
-        //dbg!(line_skew);
-        //dbg!(pga3d::point_ideal([1., 0., 0.]).join(pga3d::point_ideal([0., 1., 0.])));
-
-        let t = dbg!(pga3d::point_ideal([1., 0., 0.])
-            .join(pga3d::point_ideal([0., 1., 0.]))
-            .exp());
-        let r = dbg!(pga3d::point([0., 0., 0.])
-            .join(pga3d::point([0., 0., 1.]))
-            .exp());
-        let m = dbg!(t * r);
-
-        let m = t;
-
-        let b = pga3d::Bivector::<f32> {
-            a01: m.a01,
-            a02: m.a02,
-            a03: m.a03,
-            a12: m.a12,
-            a31: m.a31,
-            a23: m.a23,
-        };
-        let s = (-b.dot(b)).sqrt();
-        let p = -b.meet(b) * (1. / (2. * s));
-
-        dbg!(s);
-        dbg!(p);
-
-        let tan = s.atan2(m.a);
-        let u = tan / s;
-        let v = p * (-tan / (s * s) + 1. / (m.a * s));
-
-        dbg!(u);
-        dbg!(v);
-        //dbg!(b.geometric_norm());
-        //dbg!(b.geometric_inf_norm());
-        let log_b = dbg!(b * u + v * b);
-        dbg!(log_b.exp());
-
-        //let r_recovered = pga3d::Even {
-        //    a: 0.,
-        //    a01: 0.,
-        //    a02: 0.,
-        //    a03: 0.,
-        //    a12: m.a12,
-        //    a31: m.a31,
-        //    a23: m.a23,
-        //    a0123: m.a0123
-        //};
-
-        //dist(line_skew, plane_xy); // BAD
-        //dist(line_z, plane_xy); // BAD
         assert!(false);
     }
 
@@ -635,7 +502,7 @@ mod test {
             assert_close!(p1.join(p2).norm(), 5.);
         }
 
-        // Distance between point & line
+        // Distnce between point & line
         // Joining the line & point results in a plane whose norm is their unsigned distance
         {
             let l = pga3d::point::<f32>([10., 10., 10.])
@@ -665,6 +532,8 @@ mod test {
         }
 
         // Distance between parallel lines
+        // More precisely, this expression yields the distance between the projection of the
+        // origin onto each line.
         {
             let l1 = pga3d::origin::<f32>()
                 .join(pga3d::point([0., 0., 10.]))
@@ -676,6 +545,9 @@ mod test {
         }
 
         // Distance between perpendicular lines
+        // More precisely, this expression yields d * sin(a)
+        // d is the distance between the lines, and a is the angle between them
+        // (as measured along / about their shared normal)
         {
             let l1 = pga3d::origin::<f32>()
                 .join(pga3d::point([0., 0., 10.]))
@@ -687,6 +559,8 @@ mod test {
         }
 
         // Distance between skew lines
+        // This expression divides the join of the two lines (d * sin(a))
+        // by the scalar norm of their commutator product, which is sin(a)
         {
             let l1 = pga3d::origin::<f32>()
                 .join(pga3d::point([0., 0., 10.]))

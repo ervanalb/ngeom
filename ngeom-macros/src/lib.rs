@@ -1316,6 +1316,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             };
 
             // Implement .hat() which divides by the norm
+            // and .inf_hat() which divides by the infinite norm
             let hat_code = if !obj.is_scalar {
                 let type_name = obj.type_name();
                 quote! {
@@ -1325,6 +1326,15 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     {
                         fn hat(self) -> Self {
                             self * self.norm().recip()
+                        }
+                    }
+
+                    impl<T: Ring + Recip> InfHat for #type_name
+                    where
+                        Self: InfNorm<Output=T>
+                    {
+                        fn inf_hat(self) -> Self {
+                            self * self.inf_norm().recip()
                         }
                     }
                 }
