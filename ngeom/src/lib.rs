@@ -127,14 +127,14 @@ pub mod blade {
         fn geometric_inf_norm(self) -> Self::Output;
     }
 
-    pub trait Join<T> {
+    pub trait Vee<T> {
         type Output;
-        fn join(self, r: T) -> Self::Output;
+        fn vee(self, r: T) -> Self::Output;
     }
 
-    pub trait Meet<T> {
+    pub trait Wedge<T> {
         type Output;
-        fn meet(self, r: T) -> Self::Output;
+        fn wedge(self, r: T) -> Self::Output;
     }
 
     pub trait Dot<T> {
@@ -154,7 +154,7 @@ pub mod blade {
         fn transform(self, r: T) -> Self;
     }
 
-    pub trait Commutator<T> {
+    pub trait Cross<T> {
         type Output;
         fn cross(self, r: T) -> Self::Output;
     }
@@ -215,9 +215,9 @@ pub mod blade {
 
 pub mod pga2d {
     use crate::blade::{
-        Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
-        Project, Reflect, Reverse, Transform,
+        Cross, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
+        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Norm, NormSquared, Project,
+        Reflect, Reverse, Transform, Vee, Wedge,
     };
     use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -283,9 +283,9 @@ pub mod pga2d {
 
 pub mod pga3d {
     use crate::blade::{
-        Commutator, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Join, Meet, Norm, NormSquared,
-        Project, Reflect, Reverse, Transform,
+        Cross, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
+        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Norm, NormSquared, Project,
+        Reflect, Reverse, Transform, Vee, Wedge,
     };
     use crate::scalar::{Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
@@ -357,7 +357,7 @@ pub mod pga3d {
         }
     }
 
-    /// Line with equation ax + by + c = 0
+    /// Plane with equation ax + by + cz + d = 0
     pub fn plane<T: Ring>(a: T, b: T, c: T, d: T) -> Vector<T> {
         Vector {
             a0: d,
@@ -371,7 +371,7 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Commutator, Exp, Hat, InfNorm, Join, Meet, Norm, NormSquared, Project, Transform,
+        Cross, Exp, Hat, InfNorm, Norm, NormSquared, Project, Transform, Vee, Wedge,
     };
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
@@ -409,11 +409,11 @@ mod test {
 
     impl<G> IsClose for G
     where
-        G: Join<G, Output: NormSquared<Output = f32>>,
+        G: Vee<G, Output: NormSquared<Output = f32>>,
     {
         fn is_close(self, rhs: G) -> bool {
             let tol = 1e-5;
-            (self.join(rhs)).norm_squared() < tol * tol
+            (self.vee(rhs)).norm_squared() < tol * tol
         }
     }
 
@@ -436,7 +436,7 @@ mod test {
             let p1 = pga2d::point::<f32>([10., 10.]);
             let p2 = pga2d::point([13., 14.]);
 
-            assert_close!(p1.join(p2).norm(), 5.);
+            assert_close!(p1.vee(p2).norm(), 5.);
         }
 
         // Signed distance between point & line
@@ -445,10 +445,10 @@ mod test {
             // Note that the line and the test point form a triangle that is wound
             // left-handed, producing a negative distance
             let l = pga2d::point::<f32>([10., 10.])
-                .join(pga2d::point([10., 20.]))
+                .vee(pga2d::point([10., 20.]))
                 .hat();
             let p = pga2d::point([15., 15.]);
-            assert_close!(l.join(p).norm(), -5.);
+            assert_close!(l.vee(p).norm(), -5.);
         }
 
         // Distance between parallel lines
@@ -456,40 +456,12 @@ mod test {
         // More precisely, this expression yields the distance between the projection of the
         // origin onto each line.
         {
-            let l1 = pga2d::origin::<f32>().join(pga2d::point([3., 4.])).hat();
+            let l1 = pga2d::origin::<f32>().vee(pga2d::point([3., 4.])).hat();
             let l2 = pga2d::point::<f32>([4., -3.])
-                .join(pga2d::point([7., 1.]))
+                .vee(pga2d::point([7., 1.]))
                 .hat();
-            assert_close!(dbg!(l1.meet(l2)).inf_norm(), 5.);
+            assert_close!(dbg!(l1.wedge(l2)).inf_norm(), 5.);
         }
-    }
-
-    #[test]
-    fn fiddle() {
-        for t in [0., 0.2, 0.4, 0.6, 0.8, 1.] {
-            let t = t * 0.25 * core::f32::consts::TAU;
-            dbg!(t);
-            let l1 = pga2d::point([0., 100.])
-                .join(pga2d::point([1., 100.]))
-                .hat();
-            let l2 = pga2d::point([0., 100.])
-                .join(pga2d::point([t.cos(), 100. + t.sin()]))
-                .hat();
-
-            let p1 = pga2d::origin().project(l1);
-            let p2 = pga2d::origin().project(l2);
-            dbg!(p1);
-            dbg!(p2);
-            dbg!(p1.join(p2).norm());
-
-            // Distance between two support points that are perpendicular to the line and go through the origin
-
-            dbg!(l1);
-            dbg!(l2);
-            dbg!(l1.meet(l2).inf_norm());
-        }
-
-        assert!(false);
     }
 
     #[test]
@@ -499,36 +471,36 @@ mod test {
         {
             let p1 = pga3d::point::<f32>([10., 10., 10.]);
             let p2 = pga3d::point([13., 14., 10.]);
-            assert_close!(p1.join(p2).norm(), 5.);
+            assert_close!(p1.vee(p2).norm(), 5.);
         }
 
         // Distnce between point & line
         // Joining the line & point results in a plane whose norm is their unsigned distance
         {
             let l = pga3d::point::<f32>([10., 10., 10.])
-                .join(pga3d::point([10., 20., 10.]))
+                .vee(pga3d::point([10., 20., 10.]))
                 .hat();
             let p = pga3d::point([15., 15., 10.]);
-            assert_close!(l.join(p).norm(), 5.);
+            assert_close!(l.vee(p).norm(), 5.);
         }
 
         {
             let l = pga3d::point::<f32>([10., 10., 0.])
-                .join(pga3d::point([10., 10., 20.]))
+                .vee(pga3d::point([10., 10., 20.]))
                 .hat();
             let p = pga3d::point([13., 14., 10.]);
-            assert_close!(l.join(p).norm(), 5.);
+            assert_close!(l.vee(p).norm(), 5.);
         }
 
         // Distance between point & plane
         // Joining the plane & point results in a volume (scalar) corresponding to their signed distance
         {
             let pl = pga3d::point::<f32>([10., 10., 10.])
-                .join(pga3d::point([10., 20., 10.]))
-                .join(pga3d::point([20., 10., 10.]))
+                .vee(pga3d::point([10., 20., 10.]))
+                .vee(pga3d::point([20., 10., 10.]))
                 .hat();
             let pt = pga3d::point([15., 15., 15.]);
-            assert_close!(pl.join(pt), -5.);
+            assert_close!(pl.vee(pt), -5.);
         }
 
         // Distance between parallel lines
@@ -536,10 +508,10 @@ mod test {
         // origin onto each line.
         {
             let l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+                .vee(pga3d::point([0., 0., 10.]))
                 .hat();
             let l2 = pga3d::point::<f32>([3., 4., 10.])
-                .join(pga3d::point([3., 4., 20.]))
+                .vee(pga3d::point([3., 4., 20.]))
                 .hat();
             assert_close!(l1.cross(l2).inf_norm(), 5.);
         }
@@ -550,12 +522,12 @@ mod test {
         // (as measured along / about their shared normal)
         {
             let l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+                .vee(pga3d::point([0., 0., 10.]))
                 .hat();
             let l2 = pga3d::point::<f32>([8., 0., 15.])
-                .join(pga3d::point([8., 20., 15.]))
+                .vee(pga3d::point([8., 20., 15.]))
                 .hat();
-            assert_close!(l1.join(l2), 8.);
+            assert_close!(l1.vee(l2), 8.);
         }
 
         // Distance between skew lines
@@ -563,13 +535,13 @@ mod test {
         // by the scalar norm of their commutator product, which is sin(a)
         {
             let l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+                .vee(pga3d::point([0., 0., 10.]))
                 .hat();
             let l2 = pga3d::point([10., 0., 0.])
-                .join(pga3d::point([10., 5., 4.]))
+                .vee(pga3d::point([10., 5., 4.]))
                 .hat();
 
-            assert_close!(l1.join(l2) * l1.cross(l2).norm().recip(), 10.)
+            assert_close!(l1.vee(l2) * l1.cross(l2).norm().recip(), 10.)
         }
     }
 
@@ -579,8 +551,8 @@ mod test {
         // Angle between lines in 2D
         assert_close!(
             angle(
-                pga2d::origin::<f32>().join(pga2d::point([0., 5.])),
-                pga2d::origin().join(pga2d::point([-10., 10.]))
+                pga2d::origin::<f32>().vee(pga2d::point([0., 5.])),
+                pga2d::origin().vee(pga2d::point([-10., 10.]))
             ),
             0.125 * core::f32::consts::TAU,
         );
@@ -589,11 +561,11 @@ mod test {
         assert_close!(
             angle(
                 pga3d::origin::<f32>()
-                    .join(pga3d::point([0., 0., 1.]))
-                    .join(pga3d::point([0., 5., 0.])),
+                    .vee(pga3d::point([0., 0., 1.]))
+                    .vee(pga3d::point([0., 5., 0.])),
                 pga3d::origin()
-                    .join(pga3d::point([0., 0., 1.]))
-                    .join(pga3d::point([-10., 10., 0.]))
+                    .vee(pga3d::point([0., 0., 1.]))
+                    .vee(pga3d::point([-10., 10., 0.]))
             ),
             0.125 * core::f32::consts::TAU,
         );
@@ -601,16 +573,16 @@ mod test {
         {
             // Angle between line and plane
             let pl = pga3d::origin::<f32>()
-                .join(pga3d::point([1., 0., 0.]))
-                .join(pga3d::point([0., 1., 0.]))
+                .vee(pga3d::point([1., 0., 0.]))
+                .vee(pga3d::point([0., 1., 0.]))
                 .hat();
             let l = pga3d::point([10., 10., 0.])
-                .join(pga3d::point([10., 20., 10.]))
+                .vee(pga3d::point([10., 20., 10.]))
                 .hat();
 
             // TODO sign is wrong here, why?
             assert_close!(
-                pl.meet(l).norm().atan2(pl.dot(l).norm()),
+                pl.wedge(l).norm().atan2(pl.dot(l).norm()),
                 0.125 * core::f32::consts::TAU,
             )
         }
@@ -637,8 +609,8 @@ mod test {
         dbg!(motor);
 
         // This one works
-        //let l1 = pga2d::origin().join(pga2d::point([5., 5.]));
-        //let l2 = pga2d::origin().join(pga2d::point([-10., 10.]));
+        //let l1 = pga2d::origin().vee(pga2d::point([5., 5.]));
+        //let l2 = pga2d::origin().vee(pga2d::point([-10., 10.]));
         //let motor = (l2 * l1).hat() + 1.;
         //dbg!(motor);
 

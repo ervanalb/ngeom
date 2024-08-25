@@ -251,16 +251,15 @@ fn gen_algebra2(input: Input) -> TokenStream {
         // We now have a set of basis components in the vec `basis`.
         // Each one is a product of basis vectors, in sorted order.
         // This is a valid basis, but for improved ergonomics,
-        // we will negate some of the basis elements to achieve two things:
-        // 1. The ability to dualize an element in the geometry by reversing the list of coefficients
-        //    e.g. in 4D algebra: 1e0 + 2e1 + 3e2 + 4e3 <-dual-> 4e012 + 3e031 + 2e023 + 1e132
-        // 2. Maximize the number of basis elements that, when multiplied by their dual,
-        //    equal I rather than -I. Note that we can make all of these products equal I in
-        //    algebras with odd dimension, and we can always do at least half in even dimensions,
-        //    but we are forced to choose between e.g. e123 or e132 in 4D
-        //    i.e. choose between e0 * e123 = I and e132 * e0 = I
-        //    (This code chooses the former--guaranteeing I over -I
-        //    in the upper right quadrant of the multiplication table)
+        // we will negate some of the basis elements to minimize the number of negative signs in
+        // the hodge star (dual) operator.
+        // e.g. in 4D algebra: 1e0 + 2e1 + 3e2 <-dual-> 3e01 + 2e20 + 1e12
+        // Note that we can make all of these products equal I in
+        // algebras with odd dimension, and we can always do at least half in even dimensions,
+        // but we are forced to choose between e.g. e123 or e132 in 4D
+        // i.e. choose between e0 * e123 = I and e132 * e0 = I
+        // (This code chooses the former--guaranteeing I over -I
+        // in the upper right quadrant of the multiplication table)
 
         for i in 0..basis_element_count {
             if i < basis_element_count / 2 {
@@ -287,6 +286,41 @@ fn gen_algebra2(input: Input) -> TokenStream {
     };
 
     let basis_element_count = basis.len();
+
+    let dual_signs: Vec<_> = (0..basis_element_count)
+        .map(|i| {
+            let dual_i = basis_element_count - i - 1;
+
+            // Compute the product of the basis element and its dual basis element
+            // and figure out what the sign needs so that the product equals I
+            // (rather than -I)
+            let mut product: Vec<usize> = basis[i]
+                .iter()
+                .cloned()
+                .chain(basis[dual_i].iter().cloned())
+                .collect();
+            let swaps = bubble_sort_count_swaps(product.as_mut());
+            match swaps % 2 {
+                0 => 1,
+                1 => -1,
+                _ => panic!("Expected parity to be 0 or 1"),
+            }
+        })
+        .collect();
+
+    // Returns the dual of a basis element as a pair of
+    // (coef, dual_ix) where coef is -1 or 1
+    fn dual(dual_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+        let dual_ix = dual_signs.len() - i - 1;
+        (dual_signs[i], dual_ix)
+    }
+
+    // Returns the inverse of the dual of a basis element
+    // as a pair of (coef, dual_ix) where coef is -1 or 1
+    fn undual(dual_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+        let dual_ix = dual_signs.len() - i - 1;
+        (dual_signs[dual_ix], dual_ix)
+    }
 
     fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
         let basis_pretty: String = basis.iter().map(|e| format!("{}", e)).collect();
@@ -1132,9 +1166,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Add a method A.dual()
             let op_trait = quote! { Dual };
             let op_fn = Ident::new("dual", Span::call_site());
-            // We have set up our basis carefully to allow coefficient reversal
-            // to produce a valid complement
-            let dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| (1, basis.len() - i - 1));
+            let dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| dual(&dual_signs, i));
             let dual_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &dual_expressions, false);
 
@@ -1245,7 +1277,12 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
             let op_trait = quote! { GeometricInfNormSquared };
             let op_fn = Ident::new("geometric_inf_norm_squared", Span::call_site());
-            let geometric_inf_norm_product_f = |i: usize, j: usize| geometric_norm_product_f(basis.len() - i - 1, basis.len() - j - 1);
+            let geometric_inf_norm_product_f = |i: usize, j: usize| {
+                let (coef_i, i) = dual(&dual_signs, i);
+                let (coef_j, j) = dual(&dual_signs, j);
+                let (coef_prod, ix) = geometric_norm_product_f(i, j);
+                (coef_i * coef_j * coef_prod, ix)
+            };
             let geometric_inf_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, geometric_inf_norm_product_f, false);
             let geometric_inf_norm_squared_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &geometric_inf_norm_squared_expressions
@@ -1281,7 +1318,12 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
             let op_trait = quote! { InfNormSquared };
             let op_fn = Ident::new("inf_norm_squared", Span::call_site());
-            let inf_norm_product_f = |i: usize, j: usize| norm_product_f(basis.len() - i - 1, basis.len() - j - 1);
+            let inf_norm_product_f = |i: usize, j: usize| {
+                let (coef_i, i) = dual(&dual_signs, i);
+                let (coef_j, j) = dual(&dual_signs, j);
+                let (coef_prod, ix) = norm_product_f(i, j);
+                (coef_i * coef_j * coef_prod, ix)
+            };
             let inf_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, inf_norm_product_f, false);
 
             let inf_norm_squared_code =
@@ -1372,9 +1414,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.meet(B) which computes A ^ B
-            let op_trait = quote! { Meet };
-            let op_fn = Ident::new("meet", Span::call_site());
+            // Add a method A.wedge(B) which computes A ^ B
+            let op_trait = quote! { Wedge };
+            let op_fn = Ident::new("wedge", Span::call_site());
             let wedge_product = |i: usize, j: usize| {
                 let (coef, ix) = multiplication_table[i][j];
                 // Select grade s + t
@@ -1396,24 +1438,24 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.join(B) which computes A v B
-            let op_trait = quote! { Join };
-            let op_fn = Ident::new("join", Span::call_site());
+            // Add a method A.vee(B) which computes (-*)(*A ^ *B)
+            // where * is the hodge dual and (-*) is its inverse
+            let op_trait = quote! { Vee };
+            let op_fn = Ident::new("vee", Span::call_site());
             let vee_product = |i: usize, j: usize| {
-                let dual = |ix| basis.len() - ix - 1;
 
-                let i = dual(i);
-                let j = dual(j);
+                let (i_coef, i) = dual(&dual_signs, i);
+                let (j_coef, j) = dual(&dual_signs, j);
 
-                let (coef, ix) = multiplication_table[i][j];
+                let (prod_coef, ix) = multiplication_table[i][j];
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
                 let u = basis[ix].len();
-                let coef = if s + t == u { coef } else { 0 };
+                let prod_coef = if s + t == u { prod_coef } else { 0 };
 
-                let ix = dual(ix);
-                (coef, ix)
+                let (undual_coef, ix) = undual(&dual_signs, ix);
+                (i_coef * j_coef * prod_coef * undual_coef, ix)
             };
             let vee_product_code = gen_binary_operator(
                 &basis,
@@ -1469,7 +1511,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             );
 
             // Add a method A.cross(B) which computes (A * B - B * A) / 2
-            let op_trait = quote! { Commutator };
+            let op_trait = quote! { Cross };
             let op_fn = Ident::new("cross", Span::call_site());
             let commutator_product = |i: usize, j: usize| {
                 let (coef_1, ix) = multiplication_table[i][j];
