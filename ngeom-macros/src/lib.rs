@@ -520,7 +520,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         let SymbolicProdExpr(coef, terms) = &terms[0];
                         if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
                             Some(vec![SymbolicSumExpr(vec![SymbolicProdExpr(
-                                -1, // XXX
+                                1,
                                 vec![terms[0].clone()],
                             )])])
                         } else {
@@ -1210,7 +1210,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             type Output = <Self as GeometricNormSquared>::Output;
 
                             fn geometric_norm (self) -> Self::Output {
-                                -self.geometric_norm_squared().sqrt() // XXX
+                                self.geometric_norm_squared().sqrt()
                             }
                         }
                     }
@@ -1266,7 +1266,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             type Output = <Self as InfNormSquared>::Output;
 
                             fn norm (self) -> Self::Output {
-                                -self.norm_squared().sqrt() // XXX
+                                self.norm_squared().sqrt()
                             }
                         }
                     }
