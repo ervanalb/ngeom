@@ -520,7 +520,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         let SymbolicProdExpr(coef, terms) = &terms[0];
                         if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
                             Some(vec![SymbolicSumExpr(vec![SymbolicProdExpr(
-                                1,
+                                -1, // XXX
                                 vec![terms[0].clone()],
                             )])])
                         } else {
@@ -1210,7 +1210,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             type Output = <Self as GeometricNormSquared>::Output;
 
                             fn geometric_norm (self) -> Self::Output {
-                                self.geometric_norm_squared().sqrt()
+                                -self.geometric_norm_squared().sqrt() // XXX
                             }
                         }
                     }
@@ -1266,7 +1266,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             type Output = <Self as InfNormSquared>::Output;
 
                             fn norm (self) -> Self::Output {
-                                self.norm_squared().sqrt()
+                                -self.norm_squared().sqrt() // XXX
                             }
                         }
                     }
@@ -1360,6 +1360,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Implement .hat() which divides by the norm
             // and .inf_hat() which divides by the infinite norm
             let hat_code = if !obj.is_scalar {
+                let hat_neg = if obj.select_components.iter().map(|c| if *c { 1 } else { 0 }).sum::<usize>() == 6 {
+                    quote! { } // XXX
+                } else {
+                    quote! { }
+                };
                 let type_name = obj.type_name();
                 quote! {
                     impl<T: Ring + Recip> Hat for #type_name
@@ -1367,7 +1372,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         Self: Norm<Output=T>
                     {
                         fn hat(self) -> Self {
-                            self * self.norm().recip()
+                            self * #hat_neg self.norm().recip()
                         }
                     }
 
@@ -1376,7 +1381,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         Self: InfNorm<Output=T>
                     {
                         fn inf_hat(self) -> Self {
-                            self * self.inf_norm().recip()
+                            self * -self.inf_norm().recip()
                         }
                     }
                 }
