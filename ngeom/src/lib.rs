@@ -251,7 +251,7 @@ pub mod pga2d {
         Bivector {
             a01: y,
             a20: x,
-            a12: -T::one(),
+            a12: T::one(),
         }
     }
 
@@ -259,7 +259,7 @@ pub mod pga2d {
         Bivector {
             a01: y,
             a20: x,
-            a12: -T::zero(),
+            a12: T::zero(),
         }
     }
 
@@ -267,7 +267,7 @@ pub mod pga2d {
         Bivector {
             a01: y,
             a20: x,
-            a12: -w,
+            a12: w,
         }
     }
 
@@ -326,7 +326,7 @@ pub mod pga3d {
             a021: T::zero(),
             a013: T::zero(),
             a032: T::zero(),
-            a123: -T::one(),
+            a123: T::one(),
         }
     }
 
@@ -335,7 +335,7 @@ pub mod pga3d {
             a021: z,
             a013: y,
             a032: x,
-            a123: -T::one(),
+            a123: T::one(),
         }
     }
 
@@ -353,7 +353,7 @@ pub mod pga3d {
             a021: z,
             a013: y,
             a032: x,
-            a123: -w,
+            a123: w,
         }
     }
 
@@ -556,12 +556,11 @@ mod test {
 
     #[test]
     fn test_sign_2d_line_intersection() {
-        let l1 = pga2d::origin::<f32>().vee(pga2d::point([10., 0.])).hat() * -1.;
-        let l2 = pga2d::point([0., 10.]).vee(pga2d::point([10., 9.])).hat() * -1.;
+        let l1 = pga2d::origin::<f32>().vee(pga2d::point([10., 0.])).hat();
+        let l2 = pga2d::point([0., 10.]).vee(pga2d::point([10., 9.])).hat();
         let l3 = pga2d::point([0., -10.])
             .vee(pga2d::point([-10., -9.]))
-            .hat()
-            * -1.;
+            .hat();
         assert!(l1.wedge(l2).norm() < 0.);
         assert!(l2.wedge(l1).norm() > 0.);
         assert!(l1.wedge(l3).norm() > 0.);
@@ -582,16 +581,13 @@ mod test {
     fn test_sign_3d_skew_lines() {
         let l1 = pga3d::origin::<f32>()
             .vee(pga3d::point([0., 0., 10.]))
-            .hat()
-            * -1.;
+            .hat();
         let l2 = pga3d::point::<f32>([8., 0., 15.])
             .vee(pga3d::point([8., 20., 15.]))
-            .hat()
-            * -1.;
+            .hat();
         let l3 = pga3d::point::<f32>([-10., 0., 0.])
             .vee(pga3d::point([-10., 20., -5.]))
-            .hat()
-            * -1.;
+            .hat();
 
         dbg!(l1.wedge(l2));
         dbg!(l1.wedge(l3));
@@ -604,24 +600,21 @@ mod test {
         let p1 = pga3d::origin::<f32>()
             .vee(pga3d::point([1., 0., 0.]))
             .vee(pga3d::point([0., 1., 0.]))
-            .hat()
-            * -1.;
+            .hat();
         let p2 = pga3d::origin::<f32>()
             .vee(pga3d::point([0., 1., 0.]))
             .vee(pga3d::point([0., 0., 1.]))
-            .hat()
-            * -1.;
+            .hat();
         let p3 = pga3d::origin::<f32>()
             .vee(pga3d::point([0., 0., 1.]))
             .vee(pga3d::point([1., 0., 0.]))
-            .hat()
-            * -1.;
+            .hat();
 
         dbg!(p1.wedge(p2).wedge(p3).norm() > 0.);
     }
 
     #[test]
-    fn test_sign_2d_rotation() {
+    fn test_2d_rotation() { // sign
         let p = pga2d::point([1., 0.]);
         let center = pga2d::origin() * (-0.125 * core::f32::consts::TAU);
         let motor = center.exp();
@@ -629,17 +622,16 @@ mod test {
     }
 
     #[test]
-    fn test_sign_3d_rotation() {
+    fn test_3d_rotation() { // sign
         let p = pga3d::point([1., 0., 0.]);
         let l = pga3d::origin::<f32>().vee(pga3d::point([0., 0., 1.])).hat()
-            * -1.
             * (-0.125 * core::f32::consts::TAU);
         let motor = l.exp();
         assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
     #[test]
-    fn test_sign_2d_translation() {
+    fn test_2d_translation() { // sign
         let p1 = pga2d::point([10., 10.]);
 
         let center = pga2d::point_ideal([1., 0.]) * -2.5;
@@ -650,11 +642,11 @@ mod test {
     }
 
     #[test]
-    fn test_sign_3d_translation() {
+    fn test_3d_translation() { // sign
         let p1 = pga3d::point([10., 10., 10.]);
 
         let line_ideal =
-            pga3d::origin::<f32>().vee(pga3d::point([0., 1., 0.])).hat() * -1. * pga3d::i() * -2.5;
+            pga3d::origin::<f32>().vee(pga3d::point([0., 1., 0.])).hat() * pga3d::i() * -2.5;
         let motor = line_ideal.exp();
 
         let p2 = p1.transform(motor);

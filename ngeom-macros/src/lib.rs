@@ -1459,8 +1459,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let u = basis[ix].len();
                 let prod_coef = if s + t == u { prod_coef } else { 0 };
 
-                let (undual_coef, ix) = undual(&dual_signs, ix);
-                (i_coef * j_coef * prod_coef * undual_coef, ix)
+                let (dual_coef, ix) = undual(&dual_signs, ix);
+                (i_coef * j_coef * prod_coef * dual_coef, ix)
             };
             let vee_product_code = gen_binary_operator(
                 &basis,
