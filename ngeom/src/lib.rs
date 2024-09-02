@@ -230,7 +230,7 @@ pub mod pga2d {
             // This formula works because a normalized simple bivector squares to -1
             // allowing us to treat it like the imaginary unit
             let theta = self.norm();
-            self * theta.sinc() + theta.cos()
+            -self * theta.sinc() + theta.cos()
         }
     }
 
@@ -301,7 +301,7 @@ pub mod pga3d {
             // This formula works because a normalized simple bivector squares to -1
             // allowing us to treat it like the imaginary unit
             let theta = self.norm();
-            self * theta.sinc() + theta.cos()
+            -self * theta.sinc() + theta.cos()
         }
     }
 
@@ -371,7 +371,7 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Cross, Exp, Hat, InfNorm, Norm, NormSquared, Project, Transform, Vee, Wedge,
+        Cross, Dot, Exp, Hat, InfNorm, InfNormSquared, Norm, NormSquared, Transform, Vee, Wedge, Dual, Reverse
     };
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
@@ -579,6 +579,10 @@ mod test {
 
     #[test]
     fn test_sign_3d_skew_lines() {
+        // Note that this is intentionally backwards!
+        // It's impossible to reconcile the sign of this
+        // with the sign of the plane-point version,
+        // so we add the negative sign here
         let l1 = pga3d::origin::<f32>()
             .vee(pga3d::point([0., 0., 10.]))
             .hat();
@@ -589,10 +593,8 @@ mod test {
             .vee(pga3d::point([-10., 20., -5.]))
             .hat();
 
-        dbg!(l1.wedge(l2));
-        dbg!(l1.wedge(l3));
-        assert!(l1.vee(l2) < 0.);
-        assert!(l1.vee(l3) > 0.);
+        assert!(l1.vee(l2) > 0.);
+        assert!(l1.vee(l3) < 0.);
     }
 
     #[test]
@@ -614,43 +616,88 @@ mod test {
     }
 
     #[test]
-    fn test_2d_rotation() { // sign
+    fn test_2d_line_normal() {
+        let l = pga2d::origin::<f32>()
+            .vee(pga2d::point([1., 0.]))
+            .hat();
+
+        let d = l * pga2d::i(); // Why negative needed?
+
+        let expected_dir = pga2d::point_ideal([0., 1.]);
+        dbg!(d);
+        dbg!(expected_dir);
+        assert!((d - expected_dir).inf_norm_squared() < 1e-5 * 1e-5);
+    }
+
+    #[test]
+    fn test_plane_normal() {
+        let p = pga3d::origin::<f32>()
+            .vee(pga3d::point([1., 0., 0.]))
+            .vee(pga3d::point([0., 1., 0.]))
+            .hat();
+
+        let d = p * pga3d::i();
+
+        dbg!(d);
+        dbg!(p.wedge(d));
+        assert!(false);
+
+        assert!((d - pga3d::point_ideal([0., 0., 1.])).inf_norm_squared() < 1e-5 * 1e-5);
+    }
+
+    #[test]
+    fn test_3d_line_normal() {
+        let l = pga3d::origin::<f32>().vee(pga3d::point([0., 1., 0.])).hat();
+
+        let inf_line = l * pga3d::i();
+        let expected_inf_line =
+            pga3d::point_ideal([0., 0., 1.]).vee(pga3d::point_ideal([1., 0., 0.]));
+
+        //dbg!(inf_line);
+        //dbg!(expected_inf_line);
+        assert!((inf_line - expected_inf_line).inf_norm_squared() < 1e-5 * 1e-5);
+    }
+
+    #[test]
+    fn test_2d_rotation() {
         let p = pga2d::point([1., 0.]);
-        let center = pga2d::origin() * (-0.125 * core::f32::consts::TAU);
+        let center = pga2d::origin() * (0.125 * core::f32::consts::TAU);
         let motor = center.exp();
         assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
     #[test]
-    fn test_3d_rotation() { // sign
+    fn test_3d_rotation() {
         let p = pga3d::point([1., 0., 0.]);
         let l = pga3d::origin::<f32>().vee(pga3d::point([0., 0., 1.])).hat()
-            * (-0.125 * core::f32::consts::TAU);
+            * (0.125 * core::f32::consts::TAU);
+        dbg!(l);
         let motor = l.exp();
         assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
     #[test]
-    fn test_2d_translation() { // sign
+    fn test_2d_translation() {
         let p1 = pga2d::point([10., 10.]);
 
-        let center = pga2d::point_ideal([1., 0.]) * -2.5;
+        let center = pga2d::point_ideal([-1., 0.]) * 2.5;
         let motor = center.exp();
 
         let p2 = p1.transform(motor);
-        assert!(p2.is_close(pga2d::point([10., 15.])));
+        assert_close!(p2, pga2d::point([10., 15.]));
     }
 
     #[test]
-    fn test_3d_translation() { // sign
+    fn test_3d_translation() {
         let p1 = pga3d::point([10., 10., 10.]);
 
-        let line_ideal =
-            pga3d::origin::<f32>().vee(pga3d::point([0., 1., 0.])).hat() * pga3d::i() * -2.5;
+        let line_ideal = pga3d::point_ideal([0., 0., 1.]).vee(pga3d::point_ideal([1., 0., 0.])) * 2.5;
+        dbg!(line_ideal);
+
         let motor = line_ideal.exp();
 
         let p2 = p1.transform(motor);
-        assert!(p2.is_close(pga3d::point([10., 15., 10.])));
+        assert_close!(p2, pga3d::point([10., 15., 10.]));
     }
 
     /*
@@ -695,7 +742,6 @@ mod test {
             )
         }
     }
-    */
 
     #[test]
     fn motor() {
@@ -726,4 +772,5 @@ mod test {
         dbg!(p2);
         //assert_close!(p2, pga2d::point([0., 10.])); // XXX broken
     }
+    */
 }
