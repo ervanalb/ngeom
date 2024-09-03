@@ -25,6 +25,24 @@ pub mod scalar {
         fn recip(self) -> Self;
     }
 
+    pub trait AntiRecip {
+        fn anti_recip(self) -> Self;
+    }
+
+    pub trait AntiSqrt {
+        fn anti_sqrt(self) -> Self;
+    }
+
+    pub trait AntiMul<RHS = Self> {
+        type Output;
+        fn anti_mul(self, rhs: RHS) -> Self::Output;
+    }
+
+    pub trait AntiTrig {
+        fn anti_cos(self) -> Self;
+        fn anti_sinc(self) -> Self;
+    }
+
     macro_rules! impl_for_float {
         ($type:ident) => {
             impl Ring for $type {
@@ -82,54 +100,56 @@ pub mod blade {
         fn reverse(self) -> Self;
     }
 
-    pub trait Dual {
-        type Output;
-        fn dual(self) -> Self::Output;
+    pub trait AntiReverse {
+        fn anti_reverse(self) -> Self;
     }
 
-    pub trait NormSquared {
-        type Output;
-        fn norm_squared(self) -> Self::Output;
+    pub trait Bulk {
+        fn bulk(self) -> Self;
     }
 
-    pub trait Norm {
-        type Output;
-        fn norm(self) -> Self::Output;
+    pub trait Weight {
+        fn weight(self) -> Self;
     }
 
-    pub trait GeometricNormSquared {
+    pub trait BulkDual {
         type Output;
-        fn geometric_norm_squared(self) -> Self::Output;
+        fn bulk_dual(self) -> Self::Output;
     }
 
-    pub trait GeometricNorm {
+    pub trait WeightDual {
         type Output;
-        fn geometric_norm(self) -> Self::Output;
+        fn weight_dual(self) -> Self::Output;
     }
 
-    pub trait InfNormSquared {
+    pub trait RightComplement {
         type Output;
-        fn inf_norm_squared(self) -> Self::Output;
+        fn right_complement(self) -> Self::Output;
     }
 
-    pub trait InfNorm {
+    pub trait LeftComplement {
         type Output;
-        fn inf_norm(self) -> Self::Output;
+        fn left_complement(self) -> Self::Output;
     }
 
-    pub trait GeometricInfNormSquared {
+    pub trait BulkNormSquared {
         type Output;
-        fn geometric_inf_norm_squared(self) -> Self::Output;
+        fn bulk_norm_squared(self) -> Self::Output;
     }
 
-    pub trait GeometricInfNorm {
+    pub trait WeightNormSquared {
         type Output;
-        fn geometric_inf_norm(self) -> Self::Output;
+        fn weight_norm_squared(self) -> Self::Output;
     }
 
-    pub trait Vee<T> {
+    pub trait BulkNorm {
         type Output;
-        fn vee(self, r: T) -> Self::Output;
+        fn bulk_norm(self) -> Self::Output;
+    }
+
+    pub trait WeightNorm {
+        type Output;
+        fn weight_norm(self) -> Self::Output;
     }
 
     pub trait Wedge<T> {
@@ -137,67 +157,69 @@ pub mod blade {
         fn wedge(self, r: T) -> Self::Output;
     }
 
+    pub trait AntiWedge<T> {
+        type Output;
+        fn anti_wedge(self, r: T) -> Self::Output;
+    }
+
     pub trait Dot<T> {
         type Output;
         fn dot(self, r: T) -> Self::Output;
+    }
+
+    pub trait AntiDot<T> {
+        type Output;
+        fn anti_dot(self, r: T) -> Self::Output;
+    }
+
+    pub trait WedgeDot<T> {
+        type Output;
+        fn wedge_dot(self, r: T) -> Self::Output;
+    }
+
+    pub trait AntiWedgeDot<T> {
+        type Output;
+        fn anti_wedge_dot(self, r: T) -> Self::Output;
     }
 
     pub trait Project<T> {
         fn project(self, r: T) -> Self;
     }
 
-    pub trait Reflect<T> {
-        fn reflect(self, r: T) -> Self;
-    }
-
     pub trait Transform<T> {
         fn transform(self, r: T) -> Self;
     }
 
-    pub trait Cross<T> {
+    pub trait AntiCommutator<T> {
         type Output;
-        fn cross(self, r: T) -> Self::Output;
+        fn anti_commutator(self, r: T) -> Self::Output;
     }
 
-    pub trait Exp {
+    pub trait ExpAntiWedgeDot {
         type Output;
-        fn exp(self) -> Self::Output;
+        fn exp_anti_wedge_dot(self) -> Self::Output;
     }
 
-    pub trait Hat {
-        fn hat(self) -> Self;
+    pub trait Normalized {
+        fn normalized(self) -> Self;
     }
 
-    pub trait InfHat {
-        fn inf_hat(self) -> Self;
+    pub trait Unitized {
+        fn unitized(self) -> Self;
     }
 
     macro_rules! impl_for_builtin {
         ($type:ident) => {
-            impl NormSquared for $type {
+            impl BulkNormSquared for $type {
                 type Output = $type;
-                fn norm_squared(self) -> $type {
+                fn bulk_norm_squared(self) -> $type {
                     self * self
                 }
             }
 
-            impl Norm for $type {
+            impl BulkNorm for $type {
                 type Output = $type;
-                fn norm(self) -> $type {
-                    self
-                }
-            }
-
-            impl GeometricNormSquared for $type {
-                type Output = $type;
-                fn geometric_norm_squared(self) -> $type {
-                    self * self
-                }
-            }
-
-            impl GeometricNorm for $type {
-                type Output = $type;
-                fn geometric_norm(self) -> $type {
+                fn bulk_norm(self) -> $type {
                     self
                 }
             }
@@ -215,93 +237,192 @@ pub mod blade {
 
 pub mod pga2d {
     use crate::blade::{
-        Cross, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Norm, NormSquared, Project,
-        Reflect, Reverse, Transform, Vee, Wedge,
+        AntiCommutator, AntiDot, AntiReverse, AntiWedge, AntiWedgeDot, Bulk, BulkDual, BulkNorm,
+        BulkNormSquared, Dot, ExpAntiWedgeDot, LeftComplement, Normalized, Project, Reverse,
+        RightComplement, Transform, Unitized, Wedge, WedgeDot, Weight, WeightDual, WeightNorm,
+        WeightNormSquared,
     };
-    use crate::scalar::{Recip, Ring, Sqrt, Trig};
+    use crate::scalar::{AntiMul, AntiRecip, AntiSqrt, AntiTrig, Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1);
 
-    impl<T: Ring + Sqrt + Trig> Exp for Bivector<T> {
-        type Output = Even<T>;
-        fn exp(self) -> Even<T> {
-            // This formula works because a normalized simple bivector squares to -1
-            // allowing us to treat it like the imaginary unit
-            let theta = self.norm();
-            -self * theta.sinc() + theta.cos()
+    impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
+        fn anti_sqrt(self) -> AntiScalar<T> {
+            AntiScalar {
+                a012: self.a012.sqrt(),
+            }
         }
     }
 
-    pub fn i<T: Ring>() -> Pseudoscalar<T> {
-        Pseudoscalar { a012: T::one() }
+    impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
+        fn anti_recip(self) -> AntiScalar<T> {
+            AntiScalar {
+                a012: self.a012.recip(),
+            }
+        }
     }
 
-    pub fn origin<T: Ring>() -> Bivector<T> {
-        Bivector {
-            a01: T::zero(),
-            a20: T::zero(),
-            a12: T::one(),
+    impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
+        fn anti_cos(self) -> AntiScalar<T> {
+            AntiScalar {
+                a012: self.a012.cos(),
+            }
+        }
+        fn anti_sinc(self) -> AntiScalar<T> {
+            AntiScalar {
+                a012: self.a012.sinc(),
+            }
+        }
+    }
+
+    impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.a012.eq(&other.a012)
+        }
+    }
+
+    impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
+
+    impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
+        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+            self.a012.partial_cmp(&other.a012)
+        }
+    }
+
+    impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
+        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+            self.a012.cmp(&other.a012)
+        }
+    }
+
+    impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Vector<T> {
+        type Output = Odd<T>;
+        fn exp_anti_wedge_dot(self) -> Odd<T> {
+            // This formula works because a unitized simple vector squares to -1
+            // under the anti-wedge-dot product
+            // allowing us to treat it like the imaginary unit
+            let theta = self.weight_norm();
+            -self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
+        }
+    }
+
+    pub fn anti<T: Ring>(a012: T) -> AntiScalar<T> {
+        AntiScalar { a012 }
+    }
+
+    pub fn origin<T: Ring>() -> Vector<T> {
+        Vector {
+            a0: T::one(),
+            a1: T::zero(),
+            a2: T::zero(),
         }
     }
 
     // Construction functions
-    pub fn point<T: Ring>([x, y]: [T; 2]) -> Bivector<T> {
-        Bivector {
-            a01: y,
-            a20: x,
-            a12: T::one(),
-        }
-    }
-
-    pub fn point_ideal<T: Ring>([x, y]: [T; 2]) -> Bivector<T> {
-        Bivector {
-            a01: y,
-            a20: x,
-            a12: T::zero(),
-        }
-    }
-
-    pub fn point_homogeneous<T: Ring>([x, y, w]: [T; 3]) -> Bivector<T> {
-        Bivector {
-            a01: y,
-            a20: x,
-            a12: w,
-        }
-    }
-
-    /// Line with equation ax + by = c
-    pub fn line<T: Ring>(a: T, b: T, c: T) -> Vector<T> {
+    pub fn point<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
         Vector {
-            a0: c,
-            a1: a,
-            a2: b,
+            a0: T::one(),
+            a1: x,
+            a2: y,
+        }
+    }
+
+    pub fn point_ideal<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
+        Vector {
+            a0: T::zero(),
+            a1: x,
+            a2: y,
+        }
+    }
+
+    pub fn point_homogeneous<T: Ring>([x, y, w]: [T; 3]) -> Vector<T> {
+        Vector {
+            a0: w,
+            a1: x,
+            a2: y,
+        }
+    }
+
+    /// Line with equation ax + by - c = 0
+    pub fn line<T: Ring>(a: T, b: T, c: T) -> Bivector<T> {
+        Bivector {
+            a12: c,
+            a20: a,
+            a01: b,
         }
     }
 }
 
 pub mod pga3d {
     use crate::blade::{
-        Cross, Dot, Dual, Exp, GeometricInfNorm, GeometricInfNormSquared, GeometricNorm,
-        GeometricNormSquared, Hat, InfHat, InfNorm, InfNormSquared, Norm, NormSquared, Project,
-        Reflect, Reverse, Transform, Vee, Wedge,
+        AntiCommutator, AntiDot, AntiReverse, AntiWedge, AntiWedgeDot, Bulk, BulkDual, BulkNorm,
+        BulkNormSquared, Dot, ExpAntiWedgeDot, LeftComplement, Normalized, Project, Reverse,
+        RightComplement, Transform, Unitized, Wedge, WedgeDot, Weight, WeightDual, WeightNorm,
+        WeightNormSquared,
     };
-    use crate::scalar::{Recip, Ring, Sqrt, Trig};
+    use crate::scalar::{AntiMul, AntiRecip, AntiSqrt, AntiTrig, Recip, Ring, Sqrt, Trig};
     use ngeom_macros::gen_algebra;
 
     gen_algebra!(0, 1, 1, 1);
 
-    impl<T: Ring + Trig> Exp for Bivector<T>
-    where
-        Self: Norm<Output = T>,
-    {
+    impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
+        fn anti_sqrt(self) -> AntiScalar<T> {
+            AntiScalar {
+                a0123: self.a0123.sqrt(),
+            }
+        }
+    }
+
+    impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
+        fn anti_recip(self) -> AntiScalar<T> {
+            AntiScalar {
+                a0123: self.a0123.recip(),
+            }
+        }
+    }
+
+    impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
+        fn anti_cos(self) -> AntiScalar<T> {
+            AntiScalar {
+                a0123: self.a0123.cos(),
+            }
+        }
+        fn anti_sinc(self) -> AntiScalar<T> {
+            AntiScalar {
+                a0123: self.a0123.sinc(),
+            }
+        }
+    }
+
+    impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.a0123.eq(&other.a0123)
+        }
+    }
+
+    impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
+
+    impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
+        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+            self.a0123.partial_cmp(&other.a0123)
+        }
+    }
+
+    impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
+        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+            self.a0123.cmp(&other.a0123)
+        }
+    }
+
+    impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Bivector<T> {
         type Output = Even<T>;
-        fn exp(self) -> Even<T> {
-            // This formula works because a normalized simple bivector squares to -1
+        fn exp_anti_wedge_dot(self) -> Even<T> {
+            // This formula works because a normalized simple vector squares to -1
+            // under the anti-wedge-dot product
             // allowing us to treat it like the imaginary unit
-            let theta = self.norm();
-            -self * theta.sinc() + theta.cos()
+            let theta = self.weight_norm();
+            -self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
         }
     }
 
@@ -317,53 +438,53 @@ pub mod pga3d {
         }
     }
 
-    pub fn i<T: Ring>() -> Pseudoscalar<T> {
-        Pseudoscalar { a0123: T::one() }
+    pub fn anti<T: Ring>(a0123: T) -> AntiScalar<T> {
+        AntiScalar { a0123 }
     }
 
-    pub fn origin<T: Ring>() -> Trivector<T> {
-        Trivector {
-            a021: T::zero(),
-            a013: T::zero(),
-            a032: T::zero(),
-            a123: T::one(),
-        }
-    }
-
-    pub fn point<T: Ring>([x, y, z]: [T; 3]) -> Trivector<T> {
-        Trivector {
-            a021: z,
-            a013: y,
-            a032: x,
-            a123: T::one(),
-        }
-    }
-
-    pub fn point_ideal<T: Ring>([x, y, z]: [T; 3]) -> Trivector<T> {
-        Trivector {
-            a021: z,
-            a013: y,
-            a032: x,
-            a123: T::zero(),
-        }
-    }
-
-    pub fn point_homogeneous<T: Ring>([x, y, z, w]: [T; 4]) -> Trivector<T> {
-        Trivector {
-            a021: z,
-            a013: y,
-            a032: x,
-            a123: w,
-        }
-    }
-
-    /// Plane with equation ax + by + cz = d
-    pub fn plane<T: Ring>(a: T, b: T, c: T, d: T) -> Vector<T> {
+    pub fn origin<T: Ring>() -> Vector<T> {
         Vector {
-            a0: d,
-            a1: a,
-            a2: b,
-            a3: c,
+            a0: T::one(),
+            a1: T::zero(),
+            a2: T::zero(),
+            a3: T::zero(),
+        }
+    }
+
+    pub fn point<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
+        Vector {
+            a0: T::one(),
+            a1: x,
+            a2: y,
+            a3: z,
+        }
+    }
+
+    pub fn point_ideal<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
+        Vector {
+            a0: T::zero(),
+            a1: x,
+            a2: y,
+            a3: z,
+        }
+    }
+
+    pub fn point_homogeneous<T: Ring>([x, y, z, w]: [T; 4]) -> Vector<T> {
+        Vector {
+            a0: w,
+            a1: x,
+            a2: y,
+            a3: z,
+        }
+    }
+
+    /// Plane with equation ax + by + cz - d = 0
+    pub fn plane<T: Ring>(a: T, b: T, c: T, d: T) -> Trivector<T> {
+        Trivector {
+            a123: d,
+            a032: a,
+            a013: b,
+            a021: c,
         }
     }
 }
@@ -371,7 +492,8 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        Cross, Dot, Exp, Hat, InfNorm, InfNormSquared, Norm, NormSquared, Transform, Vee, Wedge, Dual, Reverse
+        AntiCommutator, AntiWedge, BulkNorm, BulkNormSquared, ExpAntiWedgeDot, Normalized,
+        RightComplement, Transform, Unitized, Wedge, WeightDual, WeightNorm, WeightNormSquared,
     };
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
@@ -407,13 +529,52 @@ mod test {
         }
     }
 
-    impl<G> IsClose for G
-    where
-        G: Vee<G, Output: NormSquared<Output = f32>>,
+    impl<T: RightComplement<Output = f32>> IsClose for T {
+        fn is_close(self, rhs: T) -> bool {
+            (self.right_complement() - rhs.right_complement()).abs() < 1e-5
+        }
+    }
+
+    /*
+    impl<
+            T: core::ops::Sub<
+                T,
+                Output: Copy
+                            + BulkNormSquared<Output = f32>
+                            + WeightNormSquared<Output: RightComplement<Output = f32>>,
+            >,
+        > IsClose for T
     {
-        fn is_close(self, rhs: G) -> bool {
+        fn is_close(self, rhs: T) -> bool {
             let tol = 1e-5;
-            (self.vee(rhs)).norm_squared() < tol * tol
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
+        }
+    }
+    */
+
+    impl IsClose for pga2d::Vector<f32> {
+        fn is_close(self, rhs: Self) -> bool {
+            let tol = 1e-5;
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
+        }
+    }
+
+    impl IsClose for pga3d::Vector<f32> {
+        fn is_close(self, rhs: Self) -> bool {
+            let tol = 1e-5;
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
         }
     }
 
@@ -436,7 +597,7 @@ mod test {
             let p1 = pga2d::point::<f32>([10., 10.]);
             let p2 = pga2d::point([13., 14.]);
 
-            assert_close!(p1.vee(p2).norm(), 5.);
+            assert_close!(p1.wedge(p2).weight_norm(), pga2d::anti(5.));
         }
 
         // Signed distance between point & line
@@ -445,10 +606,10 @@ mod test {
             // Note that the line and the test point form a triangle that is wound
             // left-handed, producing a negative distance
             let l = pga2d::point::<f32>([10., 10.])
-                .vee(pga2d::point([10., 20.]))
-                .hat();
+                .wedge(pga2d::point([10., 20.]))
+                .unitized();
             let p = pga2d::point([15., 15.]);
-            assert_close!(l.vee(p).norm(), -5.);
+            assert_close!(l.wedge(p).weight_norm(), pga2d::anti(-5.));
         }
 
         // Distance between parallel lines
@@ -456,11 +617,13 @@ mod test {
         // More precisely, this expression yields the distance between the projection of the
         // origin onto each line.
         {
-            let l1 = pga2d::origin::<f32>().vee(pga2d::point([3., 4.])).hat();
+            let l1 = pga2d::origin::<f32>()
+                .wedge(pga2d::point([3., 4.]))
+                .unitized();
             let l2 = pga2d::point::<f32>([4., -3.])
-                .vee(pga2d::point([7., 1.]))
-                .hat();
-            assert_close!(dbg!(l1.wedge(l2)).inf_norm(), 5.);
+                .wedge(pga2d::point([7., 1.]))
+                .unitized();
+            assert_close!(dbg!(l1.anti_wedge(l2)).bulk_norm(), 5.);
         }
     }
 
@@ -471,36 +634,36 @@ mod test {
         {
             let p1 = pga3d::point::<f32>([10., 10., 10.]);
             let p2 = pga3d::point([13., 14., 10.]);
-            assert_close!(p1.vee(p2).norm(), 5.);
+            assert_close!(p1.wedge(p2).weight_norm(), pga3d::anti(5.));
         }
 
         // Distnce between point & line
         // Joining the line & point results in a plane whose norm is their unsigned distance
         {
             let l = pga3d::point::<f32>([10., 10., 10.])
-                .vee(pga3d::point([10., 20., 10.]))
-                .hat();
+                .wedge(pga3d::point([10., 20., 10.]))
+                .unitized();
             let p = pga3d::point([15., 15., 10.]);
-            assert_close!(l.vee(p).norm(), 5.);
+            assert_close!(l.wedge(p).weight_norm(), pga3d::anti(5.));
         }
 
         {
             let l = pga3d::point::<f32>([10., 10., 0.])
-                .vee(pga3d::point([10., 10., 20.]))
-                .hat();
+                .wedge(pga3d::point([10., 10., 20.]))
+                .unitized();
             let p = pga3d::point([13., 14., 10.]);
-            assert_close!(l.vee(p).norm(), 5.);
+            assert_close!(l.wedge(p).weight_norm(), pga3d::anti(5.));
         }
 
         // Distance between point & plane
         // Joining the plane & point results in a scalar corresponding to their signed distance
         {
             let pl = pga3d::point::<f32>([10., 10., 10.])
-                .vee(pga3d::point([20., 10., 10.]))
-                .vee(pga3d::point([10., 20., 10.]))
-                .hat();
+                .wedge(pga3d::point([20., 10., 10.]))
+                .wedge(pga3d::point([10., 20., 10.]))
+                .unitized();
             let pt = pga3d::point([15., 15., 15.]);
-            assert_close!(pl.vee(pt), 5.);
+            assert_close!(pl.wedge(pt), pga3d::anti(5.));
         }
 
         // Distance between parallel lines
@@ -508,12 +671,12 @@ mod test {
         // origin onto each line.
         {
             let l1 = pga3d::origin::<f32>()
-                .vee(pga3d::point([0., 0., 10.]))
-                .hat();
+                .wedge(pga3d::point([0., 0., 10.]))
+                .unitized();
             let l2 = pga3d::point::<f32>([3., 4., 10.])
-                .vee(pga3d::point([3., 4., 20.]))
-                .hat();
-            assert_close!(l1.cross(l2).inf_norm(), 5.);
+                .wedge(pga3d::point([3., 4., 20.]))
+                .unitized();
+            assert_close!(l1.anti_commutator(l2).bulk_norm(), 5.);
         }
 
         // Distance between perpendicular lines
@@ -521,27 +684,27 @@ mod test {
         // d is the distance between the lines, and a is the angle between them
         // (as measured along / about their shared normal)
         {
-            let l1 = pga3d::origin::<f32>()
-                .vee(pga3d::point([0., 0., 10.]))
-                .hat();
-            let l2 = pga3d::point::<f32>([8., 0., 15.])
-                .vee(pga3d::point([8., 20., 15.]))
-                .hat();
-            //assert_close!(l1.vee(l2), -8.); // XXX broken
+            let _l1 = pga3d::origin::<f32>()
+                .wedge(pga3d::point([0., 0., 10.]))
+                .unitized();
+            let _l2 = pga3d::point::<f32>([8., 0., 15.])
+                .wedge(pga3d::point([8., 20., 15.]))
+                .unitized();
+            //assert_close!(l1.wedge(l2), pga3d::anti(-8.)); // XXX broken
         }
 
         // Distance between skew lines
         // This expression divides the join of the two lines (d * sin(a))
         // by the scalar norm of their commutator product, which is sin(a)
         {
-            let l1 = pga3d::origin::<f32>()
-                .vee(pga3d::point([0., 0., 10.]))
-                .hat();
-            let l2 = pga3d::point([10., 0., 0.])
-                .vee(pga3d::point([10., 5., 4.]))
-                .hat();
+            let _l1 = pga3d::origin::<f32>()
+                .wedge(pga3d::point([0., 0., 10.]))
+                .unitized();
+            let _l2 = pga3d::point([10., 0., 0.])
+                .wedge(pga3d::point([10., 5., 4.]))
+                .unitized();
 
-            //assert_close!(l1.vee(l2) * l1.cross(l2).norm().recip(), -10.) // XXX broken
+            //assert_close!(l1.wedge(l2) + l1.anti_commutator(l2).weight_norm(), -10.) // XXX broken
         }
     }
 
@@ -550,21 +713,26 @@ mod test {
         let p1 = pga2d::origin::<f32>();
         let p2 = pga2d::point([1., 0.]);
         let p3 = pga2d::point([0., 1.]);
-        assert!(p1.vee(p2).vee(p3) > 0.);
-        assert!(p3.vee(p2).vee(p1) < 0.);
+        assert!(p1.wedge(p2).wedge(p3) > pga2d::anti(0.));
+        assert!(p3.wedge(p2).wedge(p1) < pga2d::anti(0.));
     }
 
     #[test]
     fn test_sign_2d_line_intersection() {
-        let l1 = pga2d::origin::<f32>().vee(pga2d::point([10., 0.])).hat();
-        let l2 = pga2d::point([0., 10.]).vee(pga2d::point([10., 9.])).hat();
+        let l1 = pga2d::origin::<f32>()
+            .wedge(pga2d::point([10., 0.]))
+            .unitized();
+        let l2 = pga2d::point([0., 10.])
+            .wedge(pga2d::point([10., 9.]))
+            .unitized();
         let l3 = pga2d::point([0., -10.])
-            .vee(pga2d::point([-10., -9.]))
-            .hat();
-        assert!(l1.wedge(l2).norm() < 0.);
-        assert!(l2.wedge(l1).norm() > 0.);
-        assert!(l1.wedge(l3).norm() > 0.);
-        assert!(l3.wedge(l1).norm() < 0.);
+            .wedge(pga2d::point([-10., -9.]))
+            .unitized();
+
+        assert!(l1.anti_wedge(l2).weight_norm() < pga2d::anti(0.));
+        assert!(l2.anti_wedge(l1).weight_norm() > pga2d::anti(0.));
+        assert!(l1.anti_wedge(l3).weight_norm() > pga2d::anti(0.));
+        assert!(l3.anti_wedge(l1).weight_norm() < pga2d::anti(0.));
     }
 
     #[test]
@@ -573,8 +741,8 @@ mod test {
         let p2 = pga3d::point([1., 0., 0.]);
         let p3 = pga3d::point([0., 1., 0.]);
         let p4 = pga3d::point([0., 0., 1.]);
-        assert!(p1.vee(p2).vee(p3).vee(p4) > 0.);
-        assert!(p3.vee(p2).vee(p1).vee(p4) < 0.);
+        assert!(p1.wedge(p2).wedge(p3).wedge(p4) > pga3d::anti(0.));
+        assert!(p3.wedge(p2).wedge(p1).wedge(p4) < pga3d::anti(0.));
     }
 
     #[test]
@@ -584,95 +752,94 @@ mod test {
         // with the sign of the plane-point version,
         // so we add the negative sign here
         let l1 = pga3d::origin::<f32>()
-            .vee(pga3d::point([0., 0., 10.]))
-            .hat();
+            .wedge(pga3d::point([0., 0., 10.]))
+            .unitized();
         let l2 = pga3d::point::<f32>([8., 0., 15.])
-            .vee(pga3d::point([8., 20., 15.]))
-            .hat();
+            .wedge(pga3d::point([8., 20., 15.]))
+            .unitized();
         let l3 = pga3d::point::<f32>([-10., 0., 0.])
-            .vee(pga3d::point([-10., 20., -5.]))
-            .hat();
+            .wedge(pga3d::point([-10., 20., -5.]))
+            .unitized();
 
-        assert!(l1.vee(l2) > 0.);
-        assert!(l1.vee(l3) < 0.);
+        assert!(l1.wedge(l2) > pga3d::anti(0.));
+        assert!(l1.wedge(l3) < pga3d::anti(0.));
     }
 
     #[test]
     fn test_sign_3d_plane_intersection() {
         let p1 = pga3d::origin::<f32>()
-            .vee(pga3d::point([1., 0., 0.]))
-            .vee(pga3d::point([0., 1., 0.]))
-            .hat();
+            .wedge(pga3d::point([1., 0., 0.]))
+            .wedge(pga3d::point([0., 1., 0.]))
+            .unitized();
         let p2 = pga3d::origin::<f32>()
-            .vee(pga3d::point([0., 1., 0.]))
-            .vee(pga3d::point([0., 0., 1.]))
-            .hat();
+            .wedge(pga3d::point([0., 1., 0.]))
+            .wedge(pga3d::point([0., 0., 1.]))
+            .unitized();
         let p3 = pga3d::origin::<f32>()
-            .vee(pga3d::point([0., 0., 1.]))
-            .vee(pga3d::point([1., 0., 0.]))
-            .hat();
+            .wedge(pga3d::point([0., 0., 1.]))
+            .wedge(pga3d::point([1., 0., 0.]))
+            .unitized();
 
-        dbg!(p1.wedge(p2).wedge(p3).norm() > 0.);
+        dbg!(p1.anti_wedge(p2).anti_wedge(p3).weight_norm() > pga3d::anti(0.));
     }
 
     #[test]
     fn test_2d_line_normal() {
         let l = pga2d::origin::<f32>()
-            .vee(pga2d::point([1., 0.]))
-            .hat();
-
-        let d = l * pga2d::i(); // Why negative needed?
-
+            .wedge(pga2d::point([1., 0.]))
+            .unitized();
         let expected_dir = pga2d::point_ideal([0., 1.]);
-        dbg!(d);
-        dbg!(expected_dir);
-        assert!((d - expected_dir).inf_norm_squared() < 1e-5 * 1e-5);
+
+        let d = l.weight_dual();
+
+        assert!((d - expected_dir).weight_norm_squared() < pga2d::anti(1e-5 * 1e-5));
     }
 
     #[test]
     fn test_plane_normal() {
         let p = pga3d::origin::<f32>()
-            .vee(pga3d::point([1., 0., 0.]))
-            .vee(pga3d::point([0., 1., 0.]))
-            .hat();
+            .wedge(pga3d::point([1., 0., 0.]))
+            .wedge(pga3d::point([0., 1., 0.]))
+            .unitized();
 
-        let d = p * pga3d::i();
+        let expected_dir = pga3d::point_ideal([0., 0., 1.]);
 
-        dbg!(d);
-        dbg!(p.wedge(d));
-        assert!(false);
+        let d = p.weight_dual();
 
-        assert!((d - pga3d::point_ideal([0., 0., 1.])).inf_norm_squared() < 1e-5 * 1e-5);
+        assert!((d - expected_dir).weight_norm_squared() < pga3d::anti(1e-5 * 1e-5));
     }
 
     #[test]
     fn test_3d_line_normal() {
-        let l = pga3d::origin::<f32>().vee(pga3d::point([0., 1., 0.])).hat();
+        let l = pga3d::origin::<f32>()
+            .wedge(pga3d::point([0., 1., 0.]))
+            .unitized();
 
-        let inf_line = l * pga3d::i();
+        let inf_line = l.weight_dual();
+
         let expected_inf_line =
-            pga3d::point_ideal([0., 0., 1.]).vee(pga3d::point_ideal([1., 0., 0.]));
+            pga3d::point_ideal([0., 0., 1.]).wedge(pga3d::point_ideal([1., 0., 0.]));
 
-        //dbg!(inf_line);
-        //dbg!(expected_inf_line);
-        assert!((inf_line - expected_inf_line).inf_norm_squared() < 1e-5 * 1e-5);
+        assert!((inf_line - expected_inf_line).weight_norm_squared() < pga3d::anti(1e-5 * 1e-5));
     }
 
     #[test]
     fn test_2d_rotation() {
         let p = pga2d::point([1., 0.]);
         let center = pga2d::origin() * (0.125 * core::f32::consts::TAU);
-        let motor = center.exp();
+        let motor = center.exp_anti_wedge_dot();
         assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
     #[test]
     fn test_3d_rotation() {
         let p = pga3d::point([1., 0., 0.]);
-        let l = pga3d::origin::<f32>().vee(pga3d::point([0., 0., 1.])).hat()
+        let l = pga3d::origin::<f32>()
+            .wedge(pga3d::point([0., 0., 1.]))
+            .unitized()
             * (0.125 * core::f32::consts::TAU);
         dbg!(l);
-        let motor = l.exp();
+        let motor = l.exp_anti_wedge_dot();
         assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
@@ -681,7 +848,7 @@ mod test {
         let p1 = pga2d::point([10., 10.]);
 
         let center = pga2d::point_ideal([-1., 0.]) * 2.5;
-        let motor = center.exp();
+        let motor = center.exp_anti_wedge_dot();
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga2d::point([10., 15.]));
@@ -691,10 +858,13 @@ mod test {
     fn test_3d_translation() {
         let p1 = pga3d::point([10., 10., 10.]);
 
-        let line_ideal = pga3d::point_ideal([0., 0., 1.]).vee(pga3d::point_ideal([1., 0., 0.])) * 2.5;
+        let line_ideal = pga3d::point_ideal([0., 0., 1.])
+            .wedge(pga3d::point_ideal([1., 0., 0.]))
+            .normalized()
+            * 2.5;
         dbg!(line_ideal);
 
-        let motor = line_ideal.exp();
+        let motor = line_ideal.exp_anti_wedge_dot();
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga3d::point([10., 15., 10.]));

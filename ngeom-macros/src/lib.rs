@@ -246,10 +246,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
             basis_km1_vectors = basis_k_vectors;
         }
 
-        let basis_element_count = basis.len();
-
         // We now have a set of basis components in the vec `basis`.
         // Each one is a product of basis vectors, in sorted order.
+
         // This is a valid basis, but for improved ergonomics,
         // we will negate some of the basis elements to minimize the number of negative signs in
         // the hodge star (dual) operator.
@@ -260,6 +259,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
         // i.e. choose between e0 * e123 = I and e132 * e0 = I
         // (This code chooses the former--guaranteeing I over -I
         // in the upper right quadrant of the multiplication table)
+
+        let basis_element_count = basis.len();
 
         for i in 0..basis_element_count {
             if i < basis_element_count / 2 {
@@ -287,7 +288,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     let basis_element_count = basis.len();
 
-    let dual_signs: Vec<_> = (0..basis_element_count)
+    let right_complement_signs: Vec<_> = (0..basis_element_count)
         .map(|i| {
             let dual_i = basis_element_count - i - 1;
 
@@ -308,18 +309,19 @@ fn gen_algebra2(input: Input) -> TokenStream {
         })
         .collect();
 
-    // Returns the dual of a basis element as a pair of
-    // (coef, dual_ix) where coef is -1 or 1
-    fn dual(dual_signs: &Vec<isize>, i: usize) -> (isize, usize) {
-        let dual_ix = dual_signs.len() - i - 1;
-        (dual_signs[i], dual_ix)
+    // Returns the right_complement of a basis element as a pair of
+    // (coef, complement_ix) where coef is -1 or 1
+    fn right_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+        let complement_ix = right_complement_signs.len() - i - 1;
+        (right_complement_signs[i], complement_ix)
     }
 
-    // Returns the inverse of the dual of a basis element
-    // as a pair of (coef, dual_ix) where coef is -1 or 1
-    fn undual(dual_signs: &Vec<isize>, i: usize) -> (isize, usize) {
-        let dual_ix = dual_signs.len() - i - 1;
-        (dual_signs[dual_ix], dual_ix)
+    // Returns the inverse of the right complement of a basis element
+    // (i.e. the left complement)
+    // as a pair of (coef, complement_ix) where coef is -1 or 1
+    fn left_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+        let complement_ix = right_complement_signs.len() - i - 1;
+        (right_complement_signs[complement_ix], complement_ix)
     }
 
     fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
@@ -362,7 +364,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
     fn k_vector_identifier(k: usize, dimension: usize) -> Ident {
         Ident::new(
             &if k == dimension {
-                "Pseudoscalar".to_owned()
+                "AntiScalar".to_owned()
             } else {
                 match k {
                     0 => "Scalar".to_owned(),
@@ -391,7 +393,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
         });
     }
 
-    // Add scalar plus pseudoscalar to the object set
+    // Add scalar plus antiscalar to the object set
     let select_components: Vec<_> = basis
         .iter()
         .enumerate()
@@ -447,7 +449,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     // Function to generate a simple unary operator on an object,
     // where entries can be rearranged and coefficients can be modified
-    // (e.g. for implementing neg, dual, reverse)
+    // (e.g. for implementing neg, right_complement, reverse)
     // The result will be a list of symbolic expressions,
     // one for each coefficient value in the resultant multivector.
     fn generate_symbolic_rearrangement<F: Fn(usize) -> (isize, usize)>(
@@ -513,16 +515,42 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     .iter()
                     .enumerate()
                     .all(|(i, expr)| i == 0 || expr.0.len() == 0);
-                if is_scalar {
-                    let expression = expressions[0].clone();
+                let is_anti_scalar = expressions
+                    .iter()
+                    .enumerate()
+                    .all(|(i, expr)| i == expressions.len() - 1 || expr.0.len() == 0);
+                let expression = if is_scalar {
+                    Some(expressions[0].clone())
+                } else if is_anti_scalar {
+                    Some(expressions[expressions.len() - 1].clone())
+                } else {
+                    None
+                };
+                if let Some(expression) = expression {
                     let SymbolicSumExpr(terms) = &expression;
                     if terms.len() == 1 {
                         let SymbolicProdExpr(coef, terms) = &terms[0];
                         if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
-                            Some(vec![SymbolicSumExpr(vec![SymbolicProdExpr(
-                                1,
-                                vec![terms[0].clone()],
-                            )])])
+                            let sqrt_expression =
+                                SymbolicSumExpr(vec![SymbolicProdExpr(1, vec![terms[0].clone()])]);
+                            let target_ix = if is_scalar {
+                                0
+                            } else if is_anti_scalar {
+                                expressions.len() - 1
+                            } else {
+                                panic!("Took sqrt of something that wasn't a scalar or antiscalar");
+                            };
+                            Some(
+                                (0..select_components.len())
+                                    .map(|i| {
+                                        if i == target_ix {
+                                            sqrt_expression.clone()
+                                        } else {
+                                            Default::default()
+                                        }
+                                    })
+                                    .collect(),
+                            )
                         } else {
                             None // Expression is not a square
                         }
@@ -530,7 +558,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         None // Multiple terms in the sum
                     }
                 } else {
-                    None // Squared norm is not a scalar
+                    None // Squared norm is not a scalar or antiscalar
                 }
             }
             .unwrap_or(vec![Default::default(); select_components.len()])
@@ -658,10 +686,96 @@ fn gen_algebra2(input: Input) -> TokenStream {
         }
     }
 
-    // Generate multiplication table for the basis elements
+    // Generate dot product multiplication table for the basis elements.
+    // The dot product always produces a scalar.
+    let dot_product_multiplication_table: Vec<Vec<isize>> = {
+        let multiply_basis_vectors = |ei: usize, ej: usize| {
+            // This would need to get more complicated for CGA
+            // where the metric g is not a diagonal matrix
+            if ei == ej {
+                basis_vector_squares[ei]
+            } else {
+                0
+            }
+        };
+
+        let multiply_basis_elements = |i: usize, j: usize| {
+            // The scalar product of bivectors, trivectors, etc.
+            // can be found using the Gram determinant.
+
+            let bi = &basis[i];
+            let bj = &basis[j];
+            if bi.len() != bj.len() {
+                return 0;
+            }
+            if bi.len() == 0 {
+                return 1; // 1 • 1 = 1
+            }
+
+            let gram_matrix: Vec<Vec<isize>> = bi
+                .iter()
+                .map(|&ei| {
+                    bj.iter()
+                        .map(|&ej| multiply_basis_vectors(ei, ej))
+                        .collect()
+                })
+                .collect();
+
+            fn determinant(m: &Vec<Vec<isize>>) -> isize {
+                if m.len() == 1 {
+                    m[0][0]
+                } else {
+                    let n = m.len();
+                    (0..n)
+                        .map(move |j| {
+                            let i = 0;
+                            let sign = match (i + j) % 2 {
+                                0 => 1,
+                                1 => -1,
+                                _ => panic!("Expected parity to be 0 or 1"),
+                            };
+
+                            let minor: Vec<Vec<_>> = (0..n)
+                                .flat_map(|i2| {
+                                    if i2 == i {
+                                        None
+                                    } else {
+                                        Some(
+                                            (0..n)
+                                                .flat_map(|j2| {
+                                                    if j2 == j {
+                                                        None
+                                                    } else {
+                                                        Some(m[i2][j2])
+                                                    }
+                                                })
+                                                .collect(),
+                                        )
+                                    }
+                                })
+                                .collect();
+
+                            sign * m[i][j] * determinant(&minor)
+                        })
+                        .sum()
+                }
+            }
+            determinant(&gram_matrix)
+        };
+
+        (0..basis_element_count)
+            .map(|i| {
+                (0..basis_element_count)
+                    .map(move |j| multiply_basis_elements(i, j))
+                    .collect()
+            })
+            .collect()
+    };
+
+    // Generate geometric product multiplication table for the basis elements
     // Each entry is a tuple of the (coefficient, basis_index)
     // e.g. (1, 0) means the multiplication result is 1 * scalar = 1
-    let multiplication_table: Vec<Vec<(isize, usize)>> = {
+    let geometric_product_multiplication_table: Vec<Vec<(isize, usize)>> = {
         let multiply_basis_elements = |i: usize, j: usize| {
             let mut product: Vec<_> = basis[i]
                 .iter()
@@ -711,6 +825,24 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     })
                 })
                 .expect("Product of basis elements not found in basis set")
+        };
+
+        (0..basis_element_count)
+            .map(|i| {
+                (0..basis_element_count)
+                    .map(move |j| multiply_basis_elements(i, j))
+                    .collect()
+            })
+            .collect()
+    };
+
+    let geometric_anti_product_multiplication_table: Vec<Vec<(isize, usize)>> = {
+        let multiply_basis_elements = |i: usize, j: usize| {
+            let (coef_i, i) = right_complement(&right_complement_signs, i);
+            let (coef_j, j) = right_complement(&right_complement_signs, j);
+            let (coef, ix) = geometric_product_multiplication_table[i][j];
+            let (coef_comp, ix) = left_complement(&right_complement_signs, ix);
+            (coef_i * coef_j * coef * coef_comp, ix)
         };
 
         (0..basis_element_count)
@@ -790,7 +922,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
     }
 
     // Function to generate a double product of two objects, e.g. sandwich product, project,
-    // reflect, etc.
+    // etc.
     // The result will be a list of symbolic expressions,
     // one for each coefficient value in the resultant multivector.
     // The resulting code will implement the product in the following order:
@@ -1151,25 +1283,179 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Add a method A.reverse()
             let op_trait = quote! { Reverse };
             let op_fn = Ident::new("reverse", Span::call_site());
-            let reverse_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| {
+            let reverse_f = |i: usize| {
                     let coef = match (basis[i].len() / 2) % 2 {
                         0 => 1,
                         1 => -1,
                         _ => panic!("Expected parity to be 0 or 1"),
                     };
                     (coef, i)
-                }),
+                };
+            let reverse_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_rearrangement(&basis, &obj.select_components, reverse_f),
                 true, // output_self
                 );
 
-            // Add a method A.dual()
-            let op_trait = quote! { Dual };
-            let op_fn = Ident::new("dual", Span::call_site());
-            let dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| dual(&dual_signs, i));
-            let dual_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &dual_expressions, false);
 
+            // Add a method A.anti_reverse()
+            let op_trait = quote! { AntiReverse };
+            let op_fn = Ident::new("anti_reverse", Span::call_site());
+            let anti_reverse_f = |i: usize| {
+                    let (coef_i, i) = right_complement(&right_complement_signs, i);
+                    let (coef_rev, ix) = reverse_f(i);
+                    let (coef_comp, ix) = left_complement(&right_complement_signs, ix);
+                    (coef_i * coef_rev * coef_comp, ix)
+                };
+            let anti_reverse_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_rearrangement(&basis, &obj.select_components, anti_reverse_f),
+                true, // output_self
+                );
+
+            // Add a method A.right_complement()
+            let op_trait = quote! { RightComplement };
+            let op_fn = Ident::new("right_complement", Span::call_site());
+            let right_complement_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| right_complement(&right_complement_signs, i));
+            let right_complement_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &right_complement_expressions, false);
+
+            // Add a method A.left_complement()
+            let op_trait = quote! { LeftComplement };
+            let op_fn = Ident::new("left_complement", Span::call_site());
+            let left_complement_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| left_complement(&right_complement_signs, i));
+            let left_complement_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &left_complement_expressions, false);
+
+            // Add a method A.bulk()
+            let op_trait = quote! { Bulk };
+            let op_fn = Ident::new("bulk", Span::call_site());
+            let bulk_f = |i: usize| {
+                // This would need to be changed for CGA where the dot product multiplication table
+                // is not diagonal
+                (dot_product_multiplication_table[i][i], i)
+            };
+            let bulk_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, bulk_f);
+            let bulk_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_expressions, true);
+
+            // Add a method A.weight()
+            let op_trait = quote! { Weight };
+            let op_fn = Ident::new("weight", Span::call_site());
+            let weight_f = |i: usize| {
+                let (coef_i, i) = right_complement(&right_complement_signs, i);
+                let (coef_metric, ix) = bulk_f(i);
+                let (coef_complement, ix) = left_complement(&right_complement_signs, ix);
+                (coef_i * coef_metric * coef_complement, ix)
+            };
+            let weight_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, weight_f);
+            let weight_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_expressions, true);
+
+            // Add a method A.bulk_dual()
+            let op_trait = quote! { BulkDual };
+            let op_fn = Ident::new("bulk_dual", Span::call_site());
+            let bulk_dual_f = |i: usize| {
+                let (coef_bulk, i) = bulk_f(i);
+                let (coef_comp, i) = right_complement(&right_complement_signs, i);
+                (coef_bulk * coef_comp, i)
+            };
+            let bulk_dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, bulk_dual_f);
+            let bulk_dual_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_dual_expressions, false);
+
+            // Add a method A.weight_dual()
+            let op_trait = quote! { WeightDual };
+            let op_fn = Ident::new("weight_dual", Span::call_site());
+            let weight_dual_f = |i: usize| {
+                let (coef_bulk, i) = weight_f(i);
+                let (coef_comp, i) = right_complement(&right_complement_signs, i);
+                (coef_bulk * coef_comp, i)
+            };
+            let weight_dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, weight_dual_f);
+            let weight_dual_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_dual_expressions, false);
+
+            // Add a method A.bulk_norm_squared()
+            let op_trait = quote! { BulkNormSquared };
+            let op_fn = Ident::new("bulk_norm_squared", Span::call_site());
+            // Squared norm uses the product A • A
+            let bulk_norm_product_f = |i: usize, j: usize| (dot_product_multiplication_table[i][j], 0);
+
+            let bulk_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, false);
+            let bulk_norm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_norm_squared_expressions
+                    , false);
+
+            let bulk_norm_code = if !bulk_norm_squared_code.is_empty() {
+                // Add a method A.bulk_norm() if it is possible to symbolically take the sqrt
+                let op_trait = quote! { BulkNorm };
+                let op_fn = Ident::new("bulk_norm", Span::call_site());
+                let bulk_norm_code =
+                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, true)
+                        , false);
+                if !bulk_norm_code.is_empty() {
+                    // We found a way to symbolically take the sqrt
+                    bulk_norm_code
+                } else {
+                    // Take the square root of the norm numerically
+                    let type_name = obj.type_name();
+                    quote! {
+                        impl < T: Ring + Sqrt > BulkNorm for #type_name
+                            where <Self as BulkNormSquared>::Output: Sqrt {
+                            type Output = <Self as BulkNormSquared>::Output;
+
+                            fn bulk_norm (self) -> Self::Output {
+                                self.bulk_norm_squared().sqrt()
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {}  // There is no squared bulk norm, so return no impls for norm
+            };
+
+            let op_trait = quote! { WeightNormSquared };
+            let op_fn = Ident::new("weight_norm_squared", Span::call_site());
+            let weight_norm_product_f = |i: usize, j: usize| {
+                let (coef_i, i) = right_complement(&right_complement_signs, i);
+                let (coef_j, j) = right_complement(&right_complement_signs, j);
+                let (coef_prod, ix) = bulk_norm_product_f(i, j);
+                let (coef_complement, ix) = left_complement(&right_complement_signs, ix);
+                (coef_i * coef_j * coef_prod * coef_complement, ix)
+            };
+            let weight_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, false);
+
+            let weight_norm_squared_code =
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_norm_squared_expressions, false);
+
+            let weight_norm_code = if !weight_norm_squared_code.is_empty() {
+                // Add a method A.weight_norm() if it is possible to symbolically take the sqrt
+                let op_trait = quote! { WeightNorm };
+                let op_fn = Ident::new("weight_norm", Span::call_site());
+                let weight_norm_code =
+                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, true)
+                        , false);
+                if !weight_norm_code.is_empty() {
+                    // We found a way to symbolically take the sqrt
+                    weight_norm_code
+                } else {
+                    // Take the square root of the norm numerically
+                    let type_name = obj.type_name();
+                    quote! {
+                        impl < T: Ring + Sqrt > WeightNorm for #type_name
+                            where <Self as WeightNormSquared>::Output: AntiSqrt {
+                            type Output = <Self as WeightNormSquared>::Output;
+
+                            fn weight_norm (self) -> Self::Output {
+                                self.weight_norm_squared().anti_sqrt()
+                            }
+                        }
+                    }
+                }
+            } else {
+                quote! {}  // There is no squared norm, so return no impls for norm
+            };
+
+            /*
             // Add a method A.geometric_norm_squared()
             let op_trait = quote! { GeometricNormSquared };
             let op_fn = Ident::new("geometric_norm_squared", Span::call_site());
@@ -1219,67 +1505,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 quote! {}  // There is no squared norm, so return no impls for norm
             };
 
-            // Add a method A.norm_squared()
-            let op_trait = quote! { NormSquared };
-            let op_fn = Ident::new("norm_squared", Span::call_site());
-            let norm_product_f = |i: usize, j: usize| {
-                // Compute the product A . ~A
-
-                let reverse_coef = match (basis[j].len() / 2) % 2 {
-                    0 => 1,
-                    1 => -1,
-                    _ => panic!("Expected parity to be 0 or 1"),
-                };
-
-                let (coef, ix_result) = multiplication_table[i][j];
-
-                // Select grade |s - t|
-                let s = basis[i].len();
-                let t = basis[j].len();
-                let u = basis[ix_result].len();
-                let coef = if s + u == t || t + u == s { coef } else { 0 };
-
-                (coef * reverse_coef, ix_result)
-            };
-
-            let norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, norm_product_f, false);
-            let norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &norm_squared_expressions
-                    , false);
-
-            let norm_code = if !norm_squared_code.is_empty() {
-                // Add a method A.norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { Norm };
-                let op_fn = Ident::new("norm", Span::call_site());
-                let norm_code =
-                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, norm_product_f, true)
-                        , false);
-                if !norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt
-                    norm_code
-                } else {
-                    // Take the square root of the norm numerically
-                    let type_name = obj.type_name();
-                    quote! {
-                        impl < T: Ring + Sqrt > Norm for #type_name
-                            where <Self as InfNormSquared>::Output: Sqrt {
-                            type Output = <Self as InfNormSquared>::Output;
-
-                            fn norm (self) -> Self::Output {
-                                self.norm_squared().sqrt()
-                            }
-                        }
-                    }
-                }
-            } else {
-                quote! {}  // There is no squared norm, so return no impls for norm
-            };
-
             let op_trait = quote! { GeometricInfNormSquared };
             let op_fn = Ident::new("geometric_inf_norm_squared", Span::call_site());
             let geometric_inf_norm_product_f = |i: usize, j: usize| {
-                let (coef_i, i) = dual(&dual_signs, i);
-                let (coef_j, j) = dual(&dual_signs, j);
+                let (coef_i, i) = right_complement(&right_complement_signs, i);
+                let (coef_j, j) = right_complement(&right_complement_signs, j);
                 let (coef_prod, ix) = geometric_norm_product_f(i, j);
                 (coef_i * coef_j * coef_prod, ix)
             };
@@ -1316,72 +1546,30 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 quote! {}  // There is no squared norm, so return no impls for norm
             };
 
-            let op_trait = quote! { InfNormSquared };
-            let op_fn = Ident::new("inf_norm_squared", Span::call_site());
-            let inf_norm_product_f = |i: usize, j: usize| {
-                let (coef_i, i) = dual(&dual_signs, i);
-                let (coef_j, j) = dual(&dual_signs, j);
-                let (coef_prod, ix) = norm_product_f(i, j);
-                (coef_i * coef_j * coef_prod, ix)
-            };
-            let inf_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, inf_norm_product_f, false);
+            */
 
-            let inf_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &inf_norm_squared_expressions, false);
-
-            let inf_norm_code = if !inf_norm_squared_code.is_empty() {
-                // Add a method A.inf_norm() if it is possible to symbolically take the sqrt
-                let op_trait = quote! { InfNorm };
-                let op_fn = Ident::new("inf_norm", Span::call_site());
-                let inf_norm_code =
-                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, inf_norm_product_f, true)
-                        , false);
-                if !inf_norm_code.is_empty() {
-                    // We found a way to symbolically take the sqrt
-                    inf_norm_code
-                } else {
-                    // Take the square root of the norm numerically
-                    let type_name = obj.type_name();
-                    quote! {
-                        impl < T: Ring + Sqrt > InfNorm for #type_name
-                            where <Self as InfNormSquared>::Output: Sqrt {
-                            type Output = <Self as InfNormSquared>::Output;
-
-                            fn inf_norm (self) -> Self::Output {
-                                self.inf_norm_squared().sqrt()
-                            }
-                        }
-                    }
-                }
-            } else {
-                quote! {}  // There is no squared norm, so return no impls for norm
-            };
-
-            // Implement .hat() which divides by the norm
-            // and .inf_hat() which divides by the infinite norm
+            // Implement .normalized() which returns a scaled copy of the object
+            // where the bulk norm has been made to equal to 1
+            // Also implement .unitized() which returns a scaled copy of the object
+            // where the weight norm has been made to equal anti-1
             let hat_code = if !obj.is_scalar {
-                let hat_neg = if obj.select_components.iter().map(|c| if *c { 1 } else { 0 }).sum::<usize>() == 6 {
-                    quote! { } // XXX
-                } else {
-                    quote! { }
-                };
                 let type_name = obj.type_name();
                 quote! {
-                    impl<T: Ring + Recip> Hat for #type_name
+                    impl<T: Ring + Recip> Normalized for #type_name
                     where
-                        Self: Norm<Output=T>
+                        Self: BulkNorm<Output=T>
                     {
-                        fn hat(self) -> Self {
-                            self * #hat_neg self.norm().recip()
+                        fn normalized(self) -> Self {
+                            self * self.bulk_norm().recip()
                         }
                     }
 
-                    impl<T: Ring + Recip> InfHat for #type_name
+                    impl<T: Ring + Recip> Unitized for #type_name
                     where
-                        Self: InfNorm<Output=T>
+                        Self: WeightNorm<Output=AntiScalar<T>>
                     {
-                        fn inf_hat(self) -> Self {
-                            self * -self.inf_norm().recip()
+                        fn unitized(self) -> Self {
+                            self.anti_mul(self.weight_norm().anti_recip())
                         }
                     }
                 }
@@ -1423,7 +1611,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let op_trait = quote! { Wedge };
             let op_fn = Ident::new("wedge", Span::call_site());
             let wedge_product = |i: usize, j: usize| {
-                let (coef, ix) = multiplication_table[i][j];
+                let (coef, ix) = geometric_product_multiplication_table[i][j];
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
@@ -1443,32 +1631,32 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.vee(B) which computes (-*)(*A ^ *B)
-            // where * is the hodge dual and (-*) is its inverse
-            let op_trait = quote! { Vee };
-            let op_fn = Ident::new("vee", Span::call_site());
-            let vee_product = |i: usize, j: usize| {
+            // Add a method A.anti_wedge(B) which computes A ∨ B by means of LC(RC(A) ∧ RC(B))
+            // where RC and LC are the right-complement and left-complement
+            let op_trait = quote! { AntiWedge };
+            let op_fn = Ident::new("anti_wedge", Span::call_site());
+            let anti_wedge_product = |i: usize, j: usize| {
 
-                let (i_coef, i) = dual(&dual_signs, i);
-                let (j_coef, j) = dual(&dual_signs, j);
+                let (i_coef, i) = right_complement(&right_complement_signs, i);
+                let (j_coef, j) = right_complement(&right_complement_signs, j);
 
-                let (prod_coef, ix) = multiplication_table[i][j];
+                let (prod_coef, ix) = geometric_product_multiplication_table[i][j];
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
                 let u = basis[ix].len();
                 let prod_coef = if s + t == u { prod_coef } else { 0 };
 
-                let (dual_coef, ix) = undual(&dual_signs, ix);
-                (i_coef * j_coef * prod_coef * dual_coef, ix)
+                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
+                (i_coef * j_coef * prod_coef * complement_coef, ix)
             };
-            let vee_product_code = gen_binary_operator(
+            let anti_wedge_product_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, vee_product),
+                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product),
                 false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
@@ -1477,15 +1665,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Implement the dot product
             let op_trait = quote! { Dot };
             let op_fn = Ident::new("dot", Span::call_site());
-            let dot_product = |i: usize, j: usize| {
-                let (coef, ix) = multiplication_table[i][j];
-                // Select grade |s - t|
-                let s = basis[i].len();
-                let t = basis[j].len();
-                let u = basis[ix].len();
-                let coef = if s + u == t || t + u == s { coef } else { 0 };
-                (coef, ix)
-            };
+            let dot_product = |i: usize, j: usize| (dot_product_multiplication_table[i][j], 0);
 
             let dot_product_code = gen_binary_operator(
                 &basis,
@@ -1499,35 +1679,125 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Overload * with the geometric product
-            let op_trait = quote! { core::ops::Mul };
-            let op_fn = Ident::new("mul", Span::call_site());
-            let geometric_product = |i: usize, j: usize| multiplication_table[i][j];
-            let geometric_product_code = gen_binary_operator(
+            // Implement the anti-dot product
+            let op_trait = quote! { AntiDot };
+            let op_fn = Ident::new("anti_dot", Span::call_site());
+            let anti_dot_product = |i: usize, j: usize| {
+                let (i_coef, i) = right_complement(&right_complement_signs, i);
+                let (j_coef, j) = right_complement(&right_complement_signs, j);
+
+                let (prod_coef, ix) = dot_product(i, j);
+
+                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
+                (i_coef * j_coef * prod_coef * complement_coef, ix)
+            };
+
+            let anti_dot_product_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, geometric_product),
+                |a, b| generate_symbolic_product(&basis, a, b, anti_dot_product),
+                false, // output_self
+                false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
+            );
+
+            // Implement the geometric product ⟑
+            let op_trait = quote! { WedgeDot };
+            let op_fn = Ident::new("wedge_dot", Span::call_site());
+
+            let wedge_dot_product_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, |i: usize, j: usize| geometric_product_multiplication_table[i][j]),
+                false, // output_self
+                false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
+            );
+
+            // Implement the geometric antiproduct ⟇
+            let op_trait = quote! { AntiWedgeDot };
+            let op_fn = Ident::new("anti_wedge_dot", Span::call_site());
+            let anti_wedge_dot_product = |i: usize, j: usize| geometric_anti_product_multiplication_table[i][j];
+
+            let anti_wedge_dot_product_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_dot_product),
+                false, // output_self
+                false, // implicit_promotion_to_compound
+                None, // negative_marker_trait
+            );
+
+            // Overload * for multiplication by a scalar
+            let op_trait = quote! { core::ops::Mul };
+            let op_fn = Ident::new("mul", Span::call_site());
+            let scalar_product = |i: usize, j: usize| {
+                let (coef, ix) = geometric_product_multiplication_table[i][j];
+                // Require s or t be a scalar
+                let s = basis[i].len();
+                let t = basis[j].len();
+                let coef = if s == 0 || t == 0 { coef } else { 0 };
+                (coef, ix)
+            };
+            let scalar_product_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, scalar_product),
                 false, // output_self
                 true, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
 
-            // Add a method A.cross(B) which computes (A * B - B * A) / 2
-            let op_trait = quote! { Cross };
-            let op_fn = Ident::new("cross", Span::call_site());
+            // Implement anti_mul for multiplication by an anti-scalar
+            let op_trait = quote! { AntiMul };
+            let op_fn = Ident::new("anti_mul", Span::call_site());
+            let anti_scalar_product = |i: usize, j: usize| {
+                let (i_coef, i) = right_complement(&right_complement_signs, i);
+                let (j_coef, j) = right_complement(&right_complement_signs, j);
+
+                let (prod_coef, ix) = scalar_product(i, j);
+
+                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
+                (i_coef * j_coef * prod_coef * complement_coef, ix)
+            };
+            let anti_scalar_product_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_product),
+                false, // output_self
+                true, // implicit_promotion_to_compound
+                None, // negative_marker_trait
+            );
+
+            // Add a method A.anti_commutator(B) which computes (A ⟇ B - B ⟇ A) / 2
+            let op_trait = quote! { AntiCommutator };
+            let op_fn = Ident::new("anti_commutator", Span::call_site());
             let commutator_product = |i: usize, j: usize| {
-                let (coef_1, ix) = multiplication_table[i][j];
-                let (coef_2, ix_2) = multiplication_table[j][i];
+                let (coef_1, ix) = geometric_anti_product_multiplication_table[i][j];
+                let (coef_2, ix_2) = geometric_anti_product_multiplication_table[j][i];
 
                 let coef = coef_1 - coef_2;
 
                 assert!(ix == ix_2);
                 assert!(coef % 2 == 0);
+                let coef = coef / 2;
 
-                (coef / 2, ix)
+                (coef, ix)
             };
             let commutator_product_code = gen_binary_operator(
                 &basis,
@@ -1541,30 +1811,26 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.transform(B) which computes B * A * ~B
+            // Add a method A.transform(B) which computes B ⟇ A ⟇ AR(B)
+            // where AR is the anti-reverse function
             let op_trait = quote! { Transform };
             let op_fn = Ident::new("transform", Span::call_site());
             let transform_product_1 = |i: usize, j: usize| {
-                // Compute first half of B * A * ~B
+                // Compute first half of B ⟇ A ⟇ AR(B)
                 // Where i maps to B, and j maps to A.
-                // In part 2, we will compute the geometric product of this intermediate result
-                // with ~B
+                // In part 2, we will compute the geometric antiproduct of this intermediate result
+                // with AR(B)
 
-                multiplication_table[i][j]
+                geometric_anti_product_multiplication_table[i][j]
             };
             let transform_product_2 = |i: usize, j: usize| {
-                // Compute second half of B * A * ~B
-                // In part 1, we computed the intermediate result B * A which maps to i here.
+                // Compute second half of B ⟇ A ⟇ AR(B)
+                // In part 1, we computed the intermediate result B ⟇ A which maps to i here.
                 // j maps to B.
-                let reverse_coef = |ix: usize| match (basis[ix].len() / 2) % 2 {
-                    0 => 1,
-                    1 => -1,
-                    _ => panic!("Expected parity to be 0 or 1"),
-                };
 
-                let (coef, ix_result) = multiplication_table[i][j];
-
-                (coef * reverse_coef(j), ix_result)
+                let (coef_rev, j) = anti_reverse_f(j);
+                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
+                (coef_rev * coef_prod, ix_result)
             };
             let transform_code = gen_binary_operator(
                 &basis,
@@ -1586,44 +1852,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.reflect(B) which computes B * A * B
-            let op_trait = quote! { Reflect };
-            let op_fn = Ident::new("reflect", Span::call_site());
-            let reflect_product_1 = |i: usize, j: usize| {
-                // Compute first half of B * A * B
-                // Where i maps to B, and j maps to A.
-                // In part 2, we will compute the geometric product of this intermediate result
-                // with B
-
-                multiplication_table[i][j]
-            };
-            let reflect_product_2 = |i: usize, j: usize| {
-                // Compute second half of B * A * B
-                // In part 1, we computed the intermediate result B * A which maps to i here.
-                // j maps to B.
-                multiplication_table[i][j]
-            };
-            let reflect_code = gen_binary_operator(
-                &basis,
-                &objects,
-                op_trait,
-                op_fn,
-                &obj,
-                |a, b| {
-                    generate_symbolic_double_product(
-                        &basis,
-                        a,
-                        b,
-                        reflect_product_1,
-                        reflect_product_2,
-                    )
-                },
-                true,  // output_self
-                false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
-            );
-
             // Add a method A.project(B) which computes (B . A) * B
+            // TODO FIXME
             let op_trait = quote! { Project };
             let op_fn = Ident::new("project", Span::call_site());
             let project_product_1 = |i: usize, j: usize| {
@@ -1632,7 +1862,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 // In part 2, we will compute the geometric product of this intermediate result
                 // with B
 
-                let (coef, ix) = multiplication_table[i][j];
+                let (coef, ix) = geometric_product_multiplication_table[i][j];
                 // Select grade |s - t|
                 let s = basis[i].len();
                 let t = basis[j].len();
@@ -1644,7 +1874,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 // Compute second half of (B . A) * B
                 // In part 1, we computed the intermediate result B . A which maps to i here.
                 // j maps to B.
-                multiplication_table[i][j]
+                geometric_product_multiplication_table[i][j]
             };
             let project_code = gen_binary_operator(
                 &basis,
@@ -1675,25 +1905,30 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #display_code
                 #neg_code
                 #reverse_code
-                #dual_code
-                #norm_squared_code
-                #norm_code
-                #geometric_norm_squared_code
-                #geometric_norm_code
-                #inf_norm_squared_code
-                #inf_norm_code
-                #geometric_inf_norm_squared_code
-                #geometric_inf_norm_code
+                #anti_reverse_code
+                #bulk_code
+                #weight_code
+                #bulk_dual_code
+                #weight_dual_code
+                #right_complement_code
+                #left_complement_code
+                #bulk_norm_squared_code
+                #bulk_norm_code
+                #weight_norm_squared_code
+                #weight_norm_code
                 #hat_code
                 #add_code
                 #sub_code
                 #wedge_product_code
-                #vee_product_code
+                #anti_wedge_product_code
                 #dot_product_code
-                #geometric_product_code
+                #anti_dot_product_code
+                #wedge_dot_product_code
+                #anti_wedge_dot_product_code
+                #scalar_product_code
+                #anti_scalar_product_code
                 #commutator_product_code
                 #project_code
-                #reflect_code
                 #transform_code
             }
         })
