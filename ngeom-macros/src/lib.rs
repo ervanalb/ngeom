@@ -407,12 +407,13 @@ fn gen_algebra2(input: Input) -> TokenStream {
     });
 
     // Add even & odd sub-algebras to the object set
-    for parity in 0..2 {
-        let select_components: Vec<_> = basis.iter().map(|b| b.len() % 2 == parity).collect();
+    for anti_parity in 0..2 {
+        let anti_scalar_grade = basis[basis.len() - 1].len();
+        let select_components: Vec<_> = basis.iter().map(|b| (anti_scalar_grade - b.len()) % 2 == anti_parity).collect();
         let name = Ident::new(
-            match parity {
-                0 => "Even",
-                1 => "Odd",
+            match anti_parity {
+                0 => "AntiEven",
+                1 => "AntiOdd",
                 _ => panic!("Expected parity to be 0 or 1"),
             },
             Span::call_site(),
@@ -1183,6 +1184,61 @@ fn gen_algebra2(input: Input) -> TokenStream {
         })
         .collect();
 
+    let anti_scalar_ops: TokenStream = {
+        let field = coefficient_ident("a", &basis[basis.len() - 1]);
+
+        quote! {
+            impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
+                fn anti_recip(self) -> AntiScalar<T> {
+                    AntiScalar {
+                        #field: self.#field.recip(),
+                    }
+                }
+            }
+
+            impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
+                fn anti_sqrt(self) -> AntiScalar<T> {
+                    AntiScalar {
+                        #field: self.#field.sqrt(),
+                    }
+                }
+            }
+
+            impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
+                fn anti_cos(self) -> AntiScalar<T> {
+                    AntiScalar {
+                        #field: self.#field.cos(),
+                    }
+                }
+                fn anti_sinc(self) -> AntiScalar<T> {
+                    AntiScalar {
+                        #field: self.#field.sinc(),
+                    }
+                }
+            }
+
+            impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
+                fn eq(&self, other: &Self) -> bool {
+                    self.#field.eq(&other.#field)
+                }
+            }
+
+            impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
+
+            impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
+                fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+                    self.#field.partial_cmp(&other.#field)
+                }
+            }
+
+            impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
+                fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+                    self.#field.cmp(&other.#field)
+                }
+            }
+        }
+    };
+
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
@@ -1607,7 +1663,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.wedge(B) which computes A ^ B
+            // Add a method A.wedge(B) which computes A ∧ B
             let op_trait = quote! { Wedge };
             let op_fn = Ident::new("wedge", Span::call_site());
             let wedge_product = |i: usize, j: usize| {
@@ -1936,6 +1992,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
     quote! {
         #struct_code
+        #anti_scalar_ops
         #impl_code
     }
 }

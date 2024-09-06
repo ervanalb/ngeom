@@ -247,58 +247,9 @@ pub mod pga2d {
 
     gen_algebra!(0, 1, 1);
 
-    impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
-        fn anti_sqrt(self) -> AntiScalar<T> {
-            AntiScalar {
-                a012: self.a012.sqrt(),
-            }
-        }
-    }
-
-    impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
-        fn anti_recip(self) -> AntiScalar<T> {
-            AntiScalar {
-                a012: self.a012.recip(),
-            }
-        }
-    }
-
-    impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
-        fn anti_cos(self) -> AntiScalar<T> {
-            AntiScalar {
-                a012: self.a012.cos(),
-            }
-        }
-        fn anti_sinc(self) -> AntiScalar<T> {
-            AntiScalar {
-                a012: self.a012.sinc(),
-            }
-        }
-    }
-
-    impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.a012.eq(&other.a012)
-        }
-    }
-
-    impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
-
-    impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
-        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-            self.a012.partial_cmp(&other.a012)
-        }
-    }
-
-    impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
-        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-            self.a012.cmp(&other.a012)
-        }
-    }
-
     impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Vector<T> {
-        type Output = Odd<T>;
-        fn exp_anti_wedge_dot(self) -> Odd<T> {
+        type Output = AntiEven<T>;
+        fn exp_anti_wedge_dot(self) -> AntiEven<T> {
             // This formula works because a unitized simple vector squares to -1
             // under the anti-wedge-dot product
             // allowing us to treat it like the imaginary unit
@@ -366,58 +317,9 @@ pub mod pga3d {
 
     gen_algebra!(0, 1, 1, 1);
 
-    impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
-        fn anti_sqrt(self) -> AntiScalar<T> {
-            AntiScalar {
-                a0123: self.a0123.sqrt(),
-            }
-        }
-    }
-
-    impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
-        fn anti_recip(self) -> AntiScalar<T> {
-            AntiScalar {
-                a0123: self.a0123.recip(),
-            }
-        }
-    }
-
-    impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
-        fn anti_cos(self) -> AntiScalar<T> {
-            AntiScalar {
-                a0123: self.a0123.cos(),
-            }
-        }
-        fn anti_sinc(self) -> AntiScalar<T> {
-            AntiScalar {
-                a0123: self.a0123.sinc(),
-            }
-        }
-    }
-
-    impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.a0123.eq(&other.a0123)
-        }
-    }
-
-    impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
-
-    impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
-        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-            self.a0123.partial_cmp(&other.a0123)
-        }
-    }
-
-    impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
-        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-            self.a0123.cmp(&other.a0123)
-        }
-    }
-
     impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Bivector<T> {
-        type Output = Even<T>;
-        fn exp_anti_wedge_dot(self) -> Even<T> {
+        type Output = AntiEven<T>;
+        fn exp_anti_wedge_dot(self) -> AntiEven<T> {
             // This formula works because a normalized simple vector squares to -1
             // under the anti-wedge-dot product
             // allowing us to treat it like the imaginary unit
