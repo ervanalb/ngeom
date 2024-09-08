@@ -1210,6 +1210,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         #field: self.#field.cos(),
                     }
                 }
+                fn anti_sin(self) -> AntiScalar<T> {
+                    AntiScalar {
+                        #field: self.#field.sin(),
+                    }
+                }
                 fn anti_sinc(self) -> AntiScalar<T> {
                     AntiScalar {
                         #field: self.#field.sinc(),
@@ -1867,26 +1872,26 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.transform(B) which computes B ⟇ A ⟇ AR(B)
+            // Add a method A.transform(B) which computes B̰ ⟇ A ⟇ B
             // where AR is the anti-reverse function
             let op_trait = quote! { Transform };
             let op_fn = Ident::new("transform", Span::call_site());
             let transform_product_1 = |i: usize, j: usize| {
-                // Compute first half of B ⟇ A ⟇ AR(B)
+                // Compute first half of B̰ ⟇ A ⟇ B
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric antiproduct of this intermediate result
-                // with AR(B)
+                // with B
 
-                geometric_anti_product_multiplication_table[i][j]
-            };
-            let transform_product_2 = |i: usize, j: usize| {
-                // Compute second half of B ⟇ A ⟇ AR(B)
-                // In part 1, we computed the intermediate result B ⟇ A which maps to i here.
-                // j maps to B.
-
-                let (coef_rev, j) = anti_reverse_f(j);
+                let (coef_rev, i) = anti_reverse_f(i);
                 let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
                 (coef_rev * coef_prod, ix_result)
+            };
+            let transform_product_2 = |i: usize, j: usize| {
+                // Compute second half of B̰ ⟇ A ⟇ B
+                // In part 1, we computed the intermediate result B̰ ⟇ A which maps to i here.
+                // j maps to B.
+
+                geometric_anti_product_multiplication_table[i][j]
             };
             let transform_code = gen_binary_operator(
                 &basis,

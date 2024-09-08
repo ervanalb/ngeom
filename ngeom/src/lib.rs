@@ -14,6 +14,7 @@ pub mod scalar {
 
     pub trait Trig {
         fn cos(self) -> Self;
+        fn sin(self) -> Self;
         fn sinc(self) -> Self;
     }
 
@@ -40,6 +41,7 @@ pub mod scalar {
 
     pub trait AntiTrig {
         fn anti_cos(self) -> Self;
+        fn anti_sin(self) -> Self;
         fn anti_sinc(self) -> Self;
     }
 
@@ -63,6 +65,9 @@ pub mod scalar {
             impl Trig for $type {
                 fn cos(self) -> $type {
                     self.cos()
+                }
+                fn sin(self) -> $type {
+                    self.sin()
                 }
                 fn sinc(self) -> $type {
                     let self_adj = self.abs() + $type::EPSILON;
@@ -253,8 +258,10 @@ pub mod pga2d {
             // This formula works because a unitized simple vector squares to -1
             // under the anti-wedge-dot product
             // allowing us to treat it like the imaginary unit
-            let theta = self.weight_norm();
-            -self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
+            //
+            panic!();
+            //let theta = self.weight_norm();
+            //-self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
         }
     }
 
@@ -303,6 +310,23 @@ pub mod pga2d {
             a01: b,
         }
     }
+
+    /// Rotor about unitized point p by twice the given angle
+    pub fn axis_angle<T: Ring + Trig + Sqrt>(axis: Vector<T>, half_phi: T) -> AntiEven<T> {
+        axis * half_phi.sin() + anti(half_phi.cos())
+    }
+
+    /// Rotor about point p by twice its weight
+    pub fn rotor<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
+        let half_phi = p.weight_norm();
+        p.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
+    }
+
+    /// Translator towards ideal point p by twice its weight
+    pub fn translator<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
+        // TODO rewrite as expansion
+        origin().wedge(p).weight_dual() + anti(T::one())
+    }
 }
 
 pub mod pga3d {
@@ -323,8 +347,9 @@ pub mod pga3d {
             // This formula works because a normalized simple vector squares to -1
             // under the anti-wedge-dot product
             // allowing us to treat it like the imaginary unit
-            let theta = self.weight_norm();
-            -self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
+            panic!();
+            //let theta = self.weight_norm();
+            //-self.anti_mul(theta.anti_sinc()) + theta.anti_cos()
         }
     }
 
@@ -388,6 +413,23 @@ pub mod pga3d {
             a013: b,
             a021: c,
         }
+    }
+
+    /// Rotor about unitized line l by twice the given angle
+    pub fn axis_angle<T: Ring + Trig + Sqrt>(axis: Bivector<T>, half_phi: T) -> AntiEven<T> {
+        axis * half_phi.sin() + anti(half_phi.cos())
+    }
+
+    /// Rotor about line l by twice its weight
+    pub fn rotor<T: Ring + Trig + Sqrt>(l: Bivector<T>) -> AntiEven<T> {
+        let half_phi = l.weight_norm();
+        l.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
+    }
+
+    /// Translator towards ideal point p by twice its weight
+    pub fn translator<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
+        // TODO rewrite as expansion
+        origin().wedge(p).weight_dual() + anti(T::one())
     }
 }
 
@@ -728,8 +770,7 @@ mod test {
     #[test]
     fn test_2d_rotation() {
         let p = pga2d::point([1., 0.]);
-        let center = pga2d::origin() * (0.125 * core::f32::consts::TAU);
-        let motor = center.exp_anti_wedge_dot();
+        let motor = pga2d::axis_angle(pga2d::origin(), 0.125 * core::f32::consts::TAU);
         assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
@@ -738,10 +779,8 @@ mod test {
         let p = pga3d::point([1., 0., 0.]);
         let l = pga3d::origin::<f32>()
             .wedge(pga3d::point([0., 0., 1.]))
-            .unitized()
-            * (0.125 * core::f32::consts::TAU);
-        dbg!(l);
-        let motor = l.exp_anti_wedge_dot();
+            .unitized();
+        let motor = pga3d::axis_angle(l, 0.125 * core::f32::consts::TAU);
         assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
@@ -749,8 +788,7 @@ mod test {
     fn test_2d_translation() {
         let p1 = pga2d::point([10., 10.]);
 
-        let center = pga2d::point_ideal([-1., 0.]) * 2.5;
-        let motor = center.exp_anti_wedge_dot();
+        let motor = pga2d::translator(pga2d::point_ideal([0., 2.5]));
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga2d::point([10., 15.]));
@@ -760,13 +798,7 @@ mod test {
     fn test_3d_translation() {
         let p1 = pga3d::point([10., 10., 10.]);
 
-        let line_ideal = pga3d::point_ideal([0., 0., 1.])
-            .wedge(pga3d::point_ideal([1., 0., 0.]))
-            .normalized()
-            * 2.5;
-        dbg!(line_ideal);
-
-        let motor = line_ideal.exp_anti_wedge_dot();
+        let motor = pga3d::translator(pga3d::point_ideal([0., 2.5, 0.]));
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga3d::point([10., 15., 10.]));
