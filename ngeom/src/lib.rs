@@ -102,19 +102,23 @@ pub mod scalar {
 
 pub mod blade {
     pub trait Reverse {
+        type Output;
         fn reverse(self) -> Self;
     }
 
     pub trait AntiReverse {
+        type Output;
         fn anti_reverse(self) -> Self;
     }
 
     pub trait Bulk {
-        fn bulk(self) -> Self;
+        type Output;
+        fn bulk(self) -> Self::Output;
     }
 
     pub trait Weight {
-        fn weight(self) -> Self;
+        type Output;
+        fn weight(self) -> Self::Output;
     }
 
     pub trait BulkDual {
@@ -188,7 +192,8 @@ pub mod blade {
     }
 
     pub trait Project<T> {
-        fn project(self, r: T) -> Self;
+        type Output;
+        fn project(self, r: T) -> Self::Output;
     }
 
     pub trait AntiReverseAntiWedgeDotSandwich<T> {
@@ -207,11 +212,13 @@ pub mod blade {
     }
 
     pub trait Normalized {
-        fn normalized(self) -> Self;
+        type Output;
+        fn normalized(self) -> Self::Output;
     }
 
     pub trait Unitized {
-        fn unitized(self) -> Self;
+        type Output;
+        fn unitized(self) -> Self::Output;
     }
 
     pub trait AntiReverseAntiWedgeDot<T> {

@@ -579,7 +579,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
         op_fn: Ident,
         obj: &Object,
         expressions: &[SymbolicSumExpr],
-        output_self: bool,
     ) -> TokenStream {
         if obj.is_scalar {
             // Do not generate operations with the scalar being the LHS--
@@ -603,13 +602,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
         let Some(output_object) = output_object else {
             // No output object matches the result we got,
-            // so don't generate any code
-            return quote! {};
-        };
-
-        if output_self && output_object != obj {
-            // This function is required to return Self
-            // but we got a different output type,
             // so don't generate any code
             return quote! {};
         };
@@ -673,11 +665,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             }
         };
 
-        let associated_output_type = if output_self {
-            quote! {}
-        } else {
-            quote! { type Output = #output_type_name; }
-        };
+        let associated_output_type = quote! { type Output = #output_type_name; };
 
         quote! {
             impl < T: Ring > #op_trait for #type_name {
@@ -998,7 +986,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
         op_fn: Ident,
         lhs_obj: &Object,
         op: F,
-        output_self: bool,
         implicit_promotion_to_compound: bool,
         negative_marker_trait: Option<TokenStream>,
     ) -> TokenStream {
@@ -1031,13 +1018,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
                 let Some(output_object) = output_object else {
                     // No output object matches the result we got,
-                    // so don't generate any code
-                    return quote! {};
-                };
-
-                if output_self && output_object != lhs_obj {
-                    // This function is required to return Self
-                    // but we got a different output type,
                     // so don't generate any code
                     return quote! {};
                 };
@@ -1132,11 +1112,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     }
                 };
 
-                let associated_output_type = if output_self {
-                    quote! {}
-                } else {
-                    quote! { type Output = #output_type_name; }
-                };
+                let associated_output_type = quote! { type Output = #output_type_name; };
 
                 quote! {
                     impl < T: Ring > #op_trait < #rhs_type_name >  for #lhs_type_name {
@@ -1341,7 +1317,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 &generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| (-1, i)),
-                false, // output_self
             );
 
             // Add a method A.reverse()
@@ -1357,7 +1332,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 };
             let reverse_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_rearrangement(&basis, &obj.select_components, reverse_f),
-                true, // output_self
                 );
 
 
@@ -1372,7 +1346,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 };
             let anti_reverse_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_rearrangement(&basis, &obj.select_components, anti_reverse_f),
-                true, // output_self
                 );
 
             // Add a method A.right_complement()
@@ -1380,14 +1353,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let op_fn = Ident::new("right_complement", Span::call_site());
             let right_complement_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| right_complement(&right_complement_signs, i));
             let right_complement_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &right_complement_expressions, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &right_complement_expressions);
 
             // Add a method A.left_complement()
             let op_trait = quote! { LeftComplement };
             let op_fn = Ident::new("left_complement", Span::call_site());
             let left_complement_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, |i: usize| left_complement(&right_complement_signs, i));
             let left_complement_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &left_complement_expressions, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &left_complement_expressions);
 
             // Add a method A.bulk()
             let op_trait = quote! { Bulk };
@@ -1399,7 +1372,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             };
             let bulk_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, bulk_f);
             let bulk_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_expressions, true);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_expressions);
 
             // Add a method A.weight()
             let op_trait = quote! { Weight };
@@ -1412,7 +1385,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             };
             let weight_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, weight_f);
             let weight_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_expressions, true);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_expressions);
 
             // Add a method A.bulk_dual()
             let op_trait = quote! { BulkDual };
@@ -1424,7 +1397,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             };
             let bulk_dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, bulk_dual_f);
             let bulk_dual_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_dual_expressions, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_dual_expressions);
 
             // Add a method A.weight_dual()
             let op_trait = quote! { WeightDual };
@@ -1436,7 +1409,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             };
             let weight_dual_expressions = generate_symbolic_rearrangement(&basis, &obj.select_components, weight_dual_f);
             let weight_dual_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_dual_expressions, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_dual_expressions);
 
             // Add a method A.bulk_norm_squared()
             let op_trait = quote! { BulkNormSquared };
@@ -1446,16 +1419,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
 
             let bulk_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, false);
             let bulk_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_norm_squared_expressions
-                    , false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_norm_squared_expressions);
 
             let bulk_norm_code = if !bulk_norm_squared_code.is_empty() {
                 // Add a method A.bulk_norm() if it is possible to symbolically take the sqrt
                 let op_trait = quote! { BulkNorm };
                 let op_fn = Ident::new("bulk_norm", Span::call_site());
                 let bulk_norm_code =
-                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, true)
-                        , false);
+                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, true));
                 if !bulk_norm_code.is_empty() {
                     // We found a way to symbolically take the sqrt
                     bulk_norm_code
@@ -1489,15 +1460,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let weight_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, false);
 
             let weight_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_norm_squared_expressions, false);
+                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_norm_squared_expressions);
 
             let weight_norm_code = if !weight_norm_squared_code.is_empty() {
                 // Add a method A.weight_norm() if it is possible to symbolically take the sqrt
                 let op_trait = quote! { WeightNorm };
                 let op_fn = Ident::new("weight_norm", Span::call_site());
                 let weight_norm_code =
-                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, true)
-                        , false);
+                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, true));
                 if !weight_norm_code.is_empty() {
                     // We found a way to symbolically take the sqrt
                     weight_norm_code
@@ -1623,6 +1593,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     where
                         Self: BulkNorm<Output=T>
                     {
+                        type Output = Self;
                         fn normalized(self) -> Self {
                             self * self.bulk_norm().recip()
                         }
@@ -1632,6 +1603,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     where
                         Self: WeightNorm<Output=AntiScalar<T>>
                     {
+                        type Output = Self;
                         fn unitized(self) -> Self {
                             self.anti_mul(self.weight_norm().anti_recip())
                         }
@@ -1651,7 +1623,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, 1),
-                false, // output_self
                 true,  // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1666,7 +1637,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, -1),
-                false, // output_self
                 true,  // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1690,7 +1660,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, wedge_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1721,7 +1690,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1738,7 +1706,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, dot_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1763,7 +1730,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_dot_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1779,7 +1745,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, |i: usize, j: usize| geometric_product_multiplication_table[i][j]),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1796,7 +1761,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_dot_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1819,7 +1783,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, scalar_product),
-                false, // output_self
                 true, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1843,7 +1806,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_product),
-                false, // output_self
                 true, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1870,7 +1832,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, commutator_product),
-                false, // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1910,7 +1871,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         anti_reverse_anti_wedge_dot_sandwich_product_2,
                     )
                 },
-                false,  // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1954,7 +1914,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         project_product_2,
                     )
                 },
-                true,  // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1975,7 +1934,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_fn,
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_reverse_anti_wedge_dot_product),
-                false, // output_self
                 true, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
