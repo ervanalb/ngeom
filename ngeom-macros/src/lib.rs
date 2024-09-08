@@ -987,7 +987,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
         lhs_obj: &Object,
         op: F,
         implicit_promotion_to_compound: bool,
-        negative_marker_trait: Option<TokenStream>,
     ) -> TokenStream {
         objects
             .iter()
@@ -1042,15 +1041,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     // This operation unconditionally returns 0,
                     // so invoking it is probably a type error--
                     // do not generate code for it.
-                    // Instead, generate an impl for the negative marker trait
-                    // if one is given.
 
-                    return match &negative_marker_trait {
-                        Some(negative_marker_trait) => quote! {
-                            impl < T: Ring > #negative_marker_trait < #rhs_type_name > for #lhs_type_name { }
-                        },
-                        None => quote! {}
-                    };
+                    return quote! {};
                 }
 
                 // Convert the expression to token trees
@@ -1624,7 +1616,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, 1),
                 true,  // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Overload -
@@ -1638,7 +1629,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_sum(&basis, a, b, 1, -1),
                 true,  // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Add a method A.wedge(B) which computes A ∧ B
@@ -1661,7 +1651,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, wedge_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Add a method A.anti_wedge(B) which computes A ∨ B by means of LC(RC(A) ∧ RC(B))
@@ -1691,7 +1680,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement the dot product
@@ -1707,7 +1695,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, dot_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement the anti-dot product
@@ -1731,7 +1718,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_dot_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement the geometric product ⟑
@@ -1746,7 +1732,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, |i: usize, j: usize| geometric_product_multiplication_table[i][j]),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement the geometric antiproduct ⟇
@@ -1762,7 +1747,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_dot_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Overload * for multiplication by a scalar
@@ -1784,7 +1768,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, scalar_product),
                 true, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement anti_mul for multiplication by an anti-scalar
@@ -1807,7 +1790,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_product),
                 true, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Add a method A.anti_commutator(B) which computes (A ⟇ B - B ⟇ A) / 2
@@ -1833,7 +1815,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, commutator_product),
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Add a method A.anti_reverse_anti_wedge_dot_sandwich(B) which computes B̰ ⟇ A ⟇ B
@@ -1872,7 +1853,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     )
                 },
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Add a method A.project(B) which computes (B . A) * B
@@ -1915,7 +1895,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     )
                 },
                 false, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             // Implement anti_reverse_anti_wedge_dot which computes A̰ ⟇ B
@@ -1935,7 +1914,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 &obj,
                 |a, b| generate_symbolic_product(&basis, a, b, anti_reverse_anti_wedge_dot_product),
                 true, // implicit_promotion_to_compound
-                None, // negative_marker_trait
             );
 
             quote! {
