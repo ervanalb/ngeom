@@ -409,7 +409,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
     // Add even & odd sub-algebras to the object set
     for anti_parity in 0..2 {
         let anti_scalar_grade = basis[basis.len() - 1].len();
-        let select_components: Vec<_> = basis.iter().map(|b| (anti_scalar_grade - b.len()) % 2 == anti_parity).collect();
+        let select_components: Vec<_> = basis
+            .iter()
+            .map(|b| (anti_scalar_grade - b.len()) % 2 == anti_parity)
+            .collect();
         let name = Ident::new(
             match anti_parity {
                 0 => "AntiEven",
@@ -1872,11 +1875,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
-            // Add a method A.transform(B) which computes B̰ ⟇ A ⟇ B
-            // where AR is the anti-reverse function
-            let op_trait = quote! { Transform };
-            let op_fn = Ident::new("transform", Span::call_site());
-            let transform_product_1 = |i: usize, j: usize| {
+            // Add a method A.anti_reverse_anti_wedge_dot_sandwich(B) which computes B̰ ⟇ A ⟇ B
+            let op_trait = quote! { AntiReverseAntiWedgeDotSandwich };
+            let op_fn = Ident::new("anti_reverse_anti_wedge_dot_sandwich", Span::call_site());
+            let anti_reverse_anti_wedge_dot_sandwich_product_1 = |i: usize, j: usize| {
                 // Compute first half of B̰ ⟇ A ⟇ B
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric antiproduct of this intermediate result
@@ -1886,14 +1888,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
                 (coef_rev * coef_prod, ix_result)
             };
-            let transform_product_2 = |i: usize, j: usize| {
+            let anti_reverse_anti_wedge_dot_sandwich_product_2 = |i: usize, j: usize| {
                 // Compute second half of B̰ ⟇ A ⟇ B
                 // In part 1, we computed the intermediate result B̰ ⟇ A which maps to i here.
                 // j maps to B.
 
                 geometric_anti_product_multiplication_table[i][j]
             };
-            let transform_code = gen_binary_operator(
+            let anti_reverse_anti_wedge_dot_sandwich_product_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
@@ -1904,11 +1906,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         &basis,
                         a,
                         b,
-                        transform_product_1,
-                        transform_product_2,
+                        anti_reverse_anti_wedge_dot_sandwich_product_1,
+                        anti_reverse_anti_wedge_dot_sandwich_product_2,
                     )
                 },
-                true,  // output_self
+                false,  // output_self
                 false, // implicit_promotion_to_compound
                 None, // negative_marker_trait
             );
@@ -1957,6 +1959,27 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // negative_marker_trait
             );
 
+            // Implement anti_reverse_anti_wedge_dot which computes A̰ ⟇ B
+            let op_trait = quote! { AntiReverseAntiWedgeDot };
+            let op_fn = Ident::new("anti_reverse_anti_wedge_dot", Span::call_site());
+            let anti_reverse_anti_wedge_dot_product = |i: usize, j: usize| {
+                let (coef_rev, i) = anti_reverse_f(i);
+                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
+                (coef_rev * coef_prod, ix_result)
+            };
+
+            let anti_reverse_anti_wedge_dot_product_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, anti_reverse_anti_wedge_dot_product),
+                false, // output_self
+                true, // implicit_promotion_to_compound
+                None, // negative_marker_trait
+            );
+
             quote! {
                 // ===========================================================================
                 // #name
@@ -1990,7 +2013,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #anti_scalar_product_code
                 #commutator_product_code
                 #project_code
-                #transform_code
+                #anti_reverse_anti_wedge_dot_sandwich_product_code
+                #anti_reverse_anti_wedge_dot_product_code
             }
         })
         .collect();
