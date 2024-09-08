@@ -1379,7 +1379,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let weight_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_expressions);
 
-            // Add a method A.bulk_dual()
+            // Add a method A.bulk_dual() which computes A★
             let op_trait = quote! { BulkDual };
             let op_fn = Ident::new("bulk_dual", Span::call_site());
             let bulk_dual_f = |i: usize| {
@@ -1391,7 +1391,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let bulk_dual_code =
                 gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_dual_expressions);
 
-            // Add a method A.weight_dual()
+            // Add a method A.weight_dual() which computes A☆
             let op_trait = quote! { WeightDual };
             let op_fn = Ident::new("weight_dual", Span::call_site());
             let weight_dual_f = |i: usize| {
@@ -1577,7 +1577,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Implement .normalized() which returns a scaled copy of the object
             // where the bulk norm has been made to equal to 1
             // Also implement .unitized() which returns a scaled copy of the object
-            // where the weight norm has been made to equal anti-1
+            // where the weight norm has been made to 𝟙
             let hat_code = if !obj.is_scalar {
                 let type_name = obj.type_name();
                 quote! {
@@ -1634,7 +1634,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Add a method A.wedge(B) which computes A ∧ B
             let op_trait = quote! { Wedge };
             let op_fn = Ident::new("wedge", Span::call_site());
-            let wedge_product = |i: usize, j: usize| {
+            let wedge_product_f = |i: usize, j: usize| {
                 let (coef, ix) = geometric_product_multiplication_table[i][j];
                 // Select grade s + t
                 let s = basis[i].len();
@@ -1649,15 +1649,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, wedge_product),
+                |a, b| generate_symbolic_product(&basis, a, b, wedge_product_f),
                 false, // implicit_promotion_to_compound
             );
 
-            // Add a method A.anti_wedge(B) which computes A ∨ B by means of LC(RC(A) ∧ RC(B))
-            // where RC and LC are the right-complement and left-complement
+            // Add a method A.anti_wedge(B) which computes A ∨ B
             let op_trait = quote! { AntiWedge };
             let op_fn = Ident::new("anti_wedge", Span::call_site());
-            let anti_wedge_product = |i: usize, j: usize| {
+            let anti_wedge_product_f = |i: usize, j: usize| {
 
                 let (i_coef, i) = right_complement(&right_complement_signs, i);
                 let (j_coef, j) = right_complement(&right_complement_signs, j);
@@ -1678,11 +1677,11 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product),
+                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product_f),
                 false, // implicit_promotion_to_compound
             );
 
-            // Implement the dot product
+            // Add a method A.dot(B) which computes A • B
             let op_trait = quote! { Dot };
             let op_fn = Ident::new("dot", Span::call_site());
             let dot_product = |i: usize, j: usize| (dot_product_multiplication_table[i][j], 0);
@@ -1697,7 +1696,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Implement the anti-dot product
+            // Add a method A.anti_dot(B) which computes A ∘ B
             let op_trait = quote! { AntiDot };
             let op_fn = Ident::new("anti_dot", Span::call_site());
             let anti_dot_product = |i: usize, j: usize| {
@@ -1749,7 +1748,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Overload * for multiplication by a scalar
+            // Overload * for scalar multiplication
             let op_trait = quote! { core::ops::Mul };
             let op_fn = Ident::new("mul", Span::call_site());
             let scalar_product = |i: usize, j: usize| {
@@ -1770,10 +1769,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 true, // implicit_promotion_to_compound
             );
 
-            // Implement anti_mul for multiplication by an anti-scalar
+            // Implement A.anti_mul(B) for anti-scalar multiplication
             let op_trait = quote! { AntiMul };
             let op_fn = Ident::new("anti_mul", Span::call_site());
-            let anti_scalar_product = |i: usize, j: usize| {
+            let anti_scalar_f = |i: usize, j: usize| {
                 let (i_coef, i) = right_complement(&right_complement_signs, i);
                 let (j_coef, j) = right_complement(&right_complement_signs, j);
 
@@ -1788,8 +1787,80 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_product),
+                |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_f),
                 true, // implicit_promotion_to_compound
+            );
+
+            // Add a method A.bulk_expansion(B) which computes A ∧ B★
+            let op_trait = quote! { BulkExpansion };
+            let op_fn = Ident::new("bulk_expansion", Span::call_site());
+            let bulk_expansion_f = |i: usize, j: usize| {
+                let (coef_dual, j) = bulk_dual_f(j);
+                let (coef_prod, ix) = wedge_product_f(i, j);
+                (coef_dual * coef_prod, ix)
+            };
+            let bulk_expansion_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, bulk_expansion_f),
+                false, // implicit_promotion_to_compound
+            );
+
+            // Add a method A.weight_expansion(B) which computes A ∧ B☆
+            let op_trait = quote! { WeightExpansion };
+            let op_fn = Ident::new("weight_expansion", Span::call_site());
+            let weight_expansion_f = |i: usize, j: usize| {
+                let (coef_dual, j) = weight_dual_f(j);
+                let (coef_prod, ix) = wedge_product_f(i, j);
+                (coef_dual * coef_prod, ix)
+            };
+            let weight_expansion_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, weight_expansion_f),
+                false, // implicit_promotion_to_compound
+            );
+
+            // Add a method A.bulk_contraction(B) which computes A ∨ B★
+            let op_trait = quote! { BulkContraction };
+            let op_fn = Ident::new("bulk_contraction", Span::call_site());
+            let bulk_contraction_f = |i: usize, j: usize| {
+                let (coef_dual, j) = bulk_dual_f(j);
+                let (coef_prod, ix) = anti_wedge_product_f(i, j);
+                (coef_dual * coef_prod, ix)
+            };
+            let bulk_contraction_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, bulk_contraction_f),
+                false, // implicit_promotion_to_compound
+            );
+
+            // Add a method A.weight_contraction(B) which computes A ∨ B☆
+            let op_trait = quote! { WeightContraction };
+            let op_fn = Ident::new("weight_contraction", Span::call_site());
+            let weight_contraction_f = |i: usize, j: usize| {
+                let (coef_dual, j) = weight_dual_f(j);
+                let (coef_prod, ix) = anti_wedge_product_f(i, j);
+                (coef_dual * coef_prod, ix)
+            };
+            let weight_contraction_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| generate_symbolic_product(&basis, a, b, weight_contraction_f),
+                false, // implicit_promotion_to_compound
             );
 
             // Add a method A.anti_commutator(B) which computes (A ⟇ B - B ⟇ A) / 2
@@ -1817,10 +1888,10 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Add a method A.anti_reverse_anti_wedge_dot_sandwich(B) which computes B̰ ⟇ A ⟇ B
-            let op_trait = quote! { AntiReverseAntiWedgeDotSandwich };
-            let op_fn = Ident::new("anti_reverse_anti_wedge_dot_sandwich", Span::call_site());
-            let anti_reverse_anti_wedge_dot_sandwich_product_1 = |i: usize, j: usize| {
+            // Add a method A.transform(B) which computes B̰ ⟇ A ⟇ B
+            let op_trait = quote! { Transform };
+            let op_fn = Ident::new("transform", Span::call_site());
+            let transform_1 = |i: usize, j: usize| {
                 // Compute first half of B̰ ⟇ A ⟇ B
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric antiproduct of this intermediate result
@@ -1830,14 +1901,14 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
                 (coef_rev * coef_prod, ix_result)
             };
-            let anti_reverse_anti_wedge_dot_sandwich_product_2 = |i: usize, j: usize| {
+            let transform_2 = |i: usize, j: usize| {
                 // Compute second half of B̰ ⟇ A ⟇ B
                 // In part 1, we computed the intermediate result B̰ ⟇ A which maps to i here.
                 // j maps to B.
 
                 geometric_anti_product_multiplication_table[i][j]
             };
-            let anti_reverse_anti_wedge_dot_sandwich_product_code = gen_binary_operator(
+            let transform_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
@@ -1848,38 +1919,29 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         &basis,
                         a,
                         b,
-                        anti_reverse_anti_wedge_dot_sandwich_product_1,
-                        anti_reverse_anti_wedge_dot_sandwich_product_2,
+                        transform_1,
+                        transform_2,
                     )
                 },
                 false, // implicit_promotion_to_compound
             );
 
-            // Add a method A.project(B) which computes (B . A) * B
-            // TODO FIXME
-            let op_trait = quote! { Project };
-            let op_fn = Ident::new("project", Span::call_site());
-            let project_product_1 = |i: usize, j: usize| {
-                // Compute first half of (B . A) * B
+            // Implement A.projection(B) which computes B ∨ (A ∧  B☆)
+            let op_trait = quote! { Projection };
+            let op_fn = Ident::new("projection", Span::call_site());
+            let projection_product_1 = |i: usize, j: usize| {
+                // Compute second half of B ∨ (A ∧ B☆)
                 // Where i maps to B, and j maps to A.
-                // In part 2, we will compute the geometric product of this intermediate result
-                // with B
-
-                let (coef, ix) = geometric_product_multiplication_table[i][j];
-                // Select grade |s - t|
-                let s = basis[i].len();
-                let t = basis[j].len();
-                let u = basis[ix].len();
-                let coef = if s + u == t || t + u == s { coef } else { 0 };
-                (coef, ix)
+                // In part 2, we will compute the geometric product of B with this intermediate result
+                weight_expansion_f(j, i)
             };
-            let project_product_2 = |i: usize, j: usize| {
-                // Compute second half of (B . A) * B
-                // In part 1, we computed the intermediate result B . A which maps to i here.
+            let projection_product_2 = |i: usize, j: usize| {
+                // Compute second half of B ∨ (A ∧ B☆)
+                // In part 1, we computed the intermediate result A ∧ B☆ which maps to i here.
                 // j maps to B.
-                geometric_product_multiplication_table[i][j]
+                anti_wedge_product_f(j, i)
             };
-            let project_code = gen_binary_operator(
+            let projection_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
@@ -1890,29 +1952,128 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         &basis,
                         a,
                         b,
-                        project_product_1,
-                        project_product_2,
+                        projection_product_1,
+                        projection_product_2,
                     )
                 },
                 false, // implicit_promotion_to_compound
             );
 
-            // Implement anti_reverse_anti_wedge_dot which computes A̰ ⟇ B
-            let op_trait = quote! { AntiReverseAntiWedgeDot };
-            let op_fn = Ident::new("anti_reverse_anti_wedge_dot", Span::call_site());
-            let anti_reverse_anti_wedge_dot_product = |i: usize, j: usize| {
+            // Implement A.anti_projection(B) which computes B ∧ (A ∨ B★)
+            let op_trait = quote! { AntiProjection };
+            let op_fn = Ident::new("anti_projection", Span::call_site());
+            let anti_projection_product_1 = |i: usize, j: usize| {
+                // Compute second half of B ∧ (A ∨ B★)
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of B with this intermediate result
+                bulk_contraction_f(j, i)
+            };
+            let anti_projection_product_2 = |i: usize, j: usize| {
+                // Compute second half of B ∧ (A ∨ B★)
+                // In part 1, we computed the intermediate result A ∨ B★ which maps to i here.
+                // j maps to B.
+                wedge_product_f(j, i)
+            };
+            let anti_projection_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        anti_projection_product_1,
+                        anti_projection_product_2,
+                    )
+                },
+                false, // implicit_promotion_to_compound
+            );
+
+            // Implement A.central_projection(B) which computes B ∨ (A ∧ B★)
+            let op_trait = quote! { CentralProjection };
+            let op_fn = Ident::new("central_projection", Span::call_site());
+            let central_projection_product_1 = |i: usize, j: usize| {
+                // Compute second half of B ∨ (A ∧ B★)
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of B with this intermediate result
+                bulk_expansion_f(j, i)
+            };
+            let central_projection_product_2 = |i: usize, j: usize| {
+                // Compute second half of B ∨ (A ∧ B★)
+                // In part 1, we computed the intermediate result A ∧ B★ which maps to i here.
+                // j maps to B.
+                anti_wedge_product_f(j, i)
+            };
+            let central_projection_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        central_projection_product_1,
+                        central_projection_product_2,
+                    )
+                },
+                false, // implicit_promotion_to_compound
+            );
+
+            // Implement A.central_anti_projection(B) which computes B ∧ (A ∨ B☆)
+            let op_trait = quote! { CentralAntiProjection };
+            let op_fn = Ident::new("central_anti_projection", Span::call_site());
+            let central_anti_projection_product_1 = |i: usize, j: usize| {
+                // Compute second half of B ∧ (A ∨ B☆)
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric product of B with this intermediate result
+                weight_contraction_f(j, i)
+            };
+            let central_anti_projection_product_2 = |i: usize, j: usize| {
+                // Compute second half of B ∧ (A ∨ B★)
+                // In part 1, we computed the intermediate result A ∨ B☆ which maps to i here.
+                // j maps to B.
+                wedge_product_f(j, i)
+            };
+            let central_anti_projection_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        central_anti_projection_product_1,
+                        central_anti_projection_product_2,
+                    )
+                },
+                false, // implicit_promotion_to_compound
+            );
+
+            // Implement motor_to which computes A̰ ⟇ B
+            let op_trait = quote! { MotorTo };
+            let op_fn = Ident::new("motor_to", Span::call_site());
+            let motor_to_f = |i: usize, j: usize| {
                 let (coef_rev, i) = anti_reverse_f(i);
                 let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
                 (coef_rev * coef_prod, ix_result)
             };
 
-            let anti_reverse_anti_wedge_dot_product_code = gen_binary_operator(
+            let motor_to_code = gen_binary_operator(
                 &basis,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_reverse_anti_wedge_dot_product),
+                |a, b| generate_symbolic_product(&basis, a, b, motor_to_f),
                 true, // implicit_promotion_to_compound
             );
 
@@ -1948,9 +2109,16 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #scalar_product_code
                 #anti_scalar_product_code
                 #commutator_product_code
-                #project_code
-                #anti_reverse_anti_wedge_dot_sandwich_product_code
-                #anti_reverse_anti_wedge_dot_product_code
+                #bulk_expansion_code
+                #weight_expansion_code
+                #bulk_contraction_code
+                #weight_contraction_code
+                #projection_code
+                #anti_projection_code
+                #central_projection_code
+                #central_anti_projection_code
+                #transform_code
+                #motor_to_code
             }
         })
         .collect();

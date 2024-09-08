@@ -191,14 +191,49 @@ pub mod blade {
         fn anti_wedge_dot(self, r: T) -> Self::Output;
     }
 
-    pub trait Project<T> {
+    pub trait BulkContraction<T> {
         type Output;
-        fn project(self, r: T) -> Self::Output;
+        fn bulk_contraction(self, r: T) -> Self::Output;
     }
 
-    pub trait AntiReverseAntiWedgeDotSandwich<T> {
+    pub trait WeightContraction<T> {
         type Output;
-        fn anti_reverse_anti_wedge_dot_sandwich(self, r: T) -> Self;
+        fn weight_contraction(self, r: T) -> Self::Output;
+    }
+
+    pub trait BulkExpansion<T> {
+        type Output;
+        fn bulk_expansion(self, r: T) -> Self::Output;
+    }
+
+    pub trait WeightExpansion<T> {
+        type Output;
+        fn weight_expansion(self, r: T) -> Self::Output;
+    }
+
+    pub trait Projection<T> {
+        type Output;
+        fn projection(self, r: T) -> Self::Output;
+    }
+
+    pub trait AntiProjection<T> {
+        type Output;
+        fn anti_projection(self, r: T) -> Self::Output;
+    }
+
+    pub trait CentralProjection<T> {
+        type Output;
+        fn central_projection(self, r: T) -> Self::Output;
+    }
+
+    pub trait CentralAntiProjection<T> {
+        type Output;
+        fn central_anti_projection(self, r: T) -> Self::Output;
+    }
+
+    pub trait Transform<T> {
+        type Output;
+        fn transform(self, r: T) -> Self;
     }
 
     pub trait AntiCommutator<T> {
@@ -221,9 +256,9 @@ pub mod blade {
         fn unitized(self) -> Self::Output;
     }
 
-    pub trait AntiReverseAntiWedgeDot<T> {
+    pub trait MotorTo<T> {
         type Output;
-        fn anti_reverse_anti_wedge_dot(self, r: T) -> Self::Output;
+        fn motor_to(self, r: T) -> Self::Output;
     }
 
     macro_rules! impl_for_builtin {
@@ -439,9 +474,8 @@ pub mod pga3d {
 #[cfg(test)]
 mod test {
     use super::blade::{
-        AntiCommutator, AntiReverseAntiWedgeDot, AntiReverseAntiWedgeDotSandwich, AntiWedge,
-        AntiWedgeDot, BulkNorm, BulkNormSquared, RightComplement, Unitized, Wedge, WeightDual,
-        WeightNorm, WeightNormSquared,
+        AntiCommutator, AntiWedge, AntiWedgeDot, BulkNorm, BulkNormSquared, MotorTo,
+        RightComplement, Transform, Unitized, Wedge, WeightDual, WeightNorm, WeightNormSquared,
     };
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
@@ -775,10 +809,7 @@ mod test {
     fn test_2d_rotation() {
         let p = pga2d::point([1., 0.]);
         let motor = pga2d::axis_angle(pga2d::origin(), 0.125 * core::f32::consts::TAU);
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(motor),
-            pga2d::point([0., 1.])
-        );
+        assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
     #[test]
@@ -788,10 +819,7 @@ mod test {
             .wedge(pga3d::point([0., 0., 1.]))
             .unitized();
         let motor = pga3d::axis_angle(l, 0.125 * core::f32::consts::TAU);
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(motor),
-            pga3d::point([0., 1., 0.])
-        );
+        assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
     #[test]
@@ -800,7 +828,7 @@ mod test {
 
         let motor = pga2d::translator(pga2d::point_ideal([0., 2.5]));
 
-        let p2 = p1.anti_reverse_anti_wedge_dot_sandwich(motor);
+        let p2 = p1.transform(motor);
         assert_close!(p2, pga2d::point([10., 15.]));
     }
 
@@ -810,7 +838,7 @@ mod test {
 
         let motor = pga3d::translator(pga3d::point_ideal([0., 2.5, 0.]));
 
-        let p2 = p1.anti_reverse_anti_wedge_dot_sandwich(motor);
+        let p2 = p1.transform(motor);
         assert_close!(p2, pga3d::point([10., 15., 10.]));
     }
 
@@ -818,9 +846,9 @@ mod test {
     fn test_2d_translation_from_geo() {
         let p1 = pga2d::point([10., 10.]);
 
-        let motor = pga2d::point([50., 50.]).anti_reverse_anti_wedge_dot(pga2d::point([50., 52.5]));
+        let motor = pga2d::point([50., 50.]).motor_to(pga2d::point([50., 52.5]));
 
-        let p2 = p1.anti_reverse_anti_wedge_dot_sandwich(motor);
+        let p2 = p1.transform(motor);
         assert_close!(p2, pga2d::point([10., 15.]));
     }
 
@@ -830,12 +858,9 @@ mod test {
 
         let rot_l1 = pga2d::origin().wedge(pga2d::point([10., 0.])).unitized();
         let rot_l2 = pga2d::origin().wedge(pga2d::point([10., 10.])).unitized();
-        let motor = rot_l1.anti_reverse_anti_wedge_dot(rot_l2);
+        let motor = rot_l1.motor_to(rot_l2);
 
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(motor),
-            pga2d::point([0., 1.])
-        );
+        assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
     #[test]
@@ -846,16 +871,10 @@ mod test {
         let rotate_90 = pga2d::axis_angle(pga2d::origin(), 0.125 * core::f32::consts::TAU);
 
         let up_then_rotate = translate_up_5.anti_wedge_dot(rotate_90);
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(up_then_rotate),
-            pga2d::point([-15., 10.])
-        );
+        assert_close!(p.transform(up_then_rotate), pga2d::point([-15., 10.]));
 
         let rotate_then_up = rotate_90.anti_wedge_dot(translate_up_5);
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(rotate_then_up),
-            pga2d::point([-10., 15.])
-        );
+        assert_close!(p.transform(rotate_then_up), pga2d::point([-10., 15.]));
     }
 
     #[test]
@@ -864,13 +883,10 @@ mod test {
         let rot_l2 = pga2d::point([0., 10.])
             .wedge(pga2d::point([10., 10.]))
             .unitized();
-        let motor = rot_l1.anti_reverse_anti_wedge_dot(rot_l2);
+        let motor = rot_l1.motor_to(rot_l2);
 
         let p = pga2d::origin();
-        assert_close!(
-            p.anti_reverse_anti_wedge_dot_sandwich(motor),
-            pga2d::point([0., 20.])
-        );
+        assert_close!(p.transform(motor), pga2d::point([0., 20.]));
     }
 
     /*
