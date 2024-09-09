@@ -1959,18 +1959,18 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Implement A.anti_projection(B) which computes B ∧ (A ∨ B★)
+            // Implement A.anti_projection(B) which computes B ∧ (A ∨ B☆)
             let op_trait = quote! { AntiProjection };
             let op_fn = Ident::new("anti_projection", Span::call_site());
             let anti_projection_product_1 = |i: usize, j: usize| {
-                // Compute second half of B ∧ (A ∨ B★)
+                // Compute second half of B ∧ (A ∨ B☆)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                bulk_contraction_f(j, i)
+                weight_contraction_f(j, i)
             };
             let anti_projection_product_2 = |i: usize, j: usize| {
-                // Compute second half of B ∧ (A ∨ B★)
-                // In part 1, we computed the intermediate result A ∨ B★ which maps to i here.
+                // Compute second half of B ∧ (A ∨ B☆)
+                // In part 1, we computed the intermediate result A ∨ B☆ which maps to i here.
                 // j maps to B.
                 wedge_product_f(j, i)
             };
@@ -2025,18 +2025,18 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 false, // implicit_promotion_to_compound
             );
 
-            // Implement A.central_anti_projection(B) which computes B ∧ (A ∨ B☆)
+            // Implement A.central_anti_projection(B) which computes B ∧ (A ∨ B★)
             let op_trait = quote! { CentralAntiProjection };
             let op_fn = Ident::new("central_anti_projection", Span::call_site());
             let central_anti_projection_product_1 = |i: usize, j: usize| {
-                // Compute second half of B ∧ (A ∨ B☆)
+                // Compute second half of B ∧ (A ∨ B★)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                weight_contraction_f(j, i)
+                bulk_contraction_f(j, i)
             };
             let central_anti_projection_product_2 = |i: usize, j: usize| {
                 // Compute second half of B ∧ (A ∨ B★)
-                // In part 1, we computed the intermediate result A ∨ B☆ which maps to i here.
+                // In part 1, we computed the intermediate result A ∨ B★ which maps to i here.
                 // j maps to B.
                 wedge_product_f(j, i)
             };

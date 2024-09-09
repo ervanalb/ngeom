@@ -12,18 +12,27 @@ pub mod scalar {
         fn one() -> Self;
     }
 
-    pub trait Trig {
-        fn cos(self) -> Self;
-        fn sin(self) -> Self;
-        fn sinc(self) -> Self;
+    pub trait Rational {
+        fn one_half() -> Self;
     }
 
     pub trait Sqrt {
         fn sqrt(self) -> Self;
     }
 
+    pub trait Trig {
+        fn cos(self) -> Self;
+        fn sin(self) -> Self;
+        fn sinc(self) -> Self;
+    }
+
     pub trait Recip: Sized {
         fn recip(self) -> Self;
+    }
+
+    pub trait AntiMul<RHS = Self> {
+        type Output;
+        fn anti_mul(self, rhs: RHS) -> Self::Output;
     }
 
     pub trait AntiRecip {
@@ -32,11 +41,6 @@ pub mod scalar {
 
     pub trait AntiSqrt {
         fn anti_sqrt(self) -> Self;
-    }
-
-    pub trait AntiMul<RHS = Self> {
-        type Output;
-        fn anti_mul(self, rhs: RHS) -> Self::Output;
     }
 
     pub trait AntiTrig {
@@ -53,6 +57,12 @@ pub mod scalar {
                 }
                 fn one() -> $type {
                     1.
+                }
+            }
+
+            impl Rational for $type {
+                fn one_half() -> $type {
+                    0.5
                 }
             }
 
@@ -329,7 +339,7 @@ pub mod pga2d {
         }
     }
 
-    pub fn point_ideal<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
+    pub fn ideal_point<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
         Vector {
             a0: T::zero(),
             a1: x,
@@ -337,7 +347,7 @@ pub mod pga2d {
         }
     }
 
-    pub fn point_homogeneous<T: Ring>([x, y, w]: [T; 3]) -> Vector<T> {
+    pub fn homogeneous_point<T: Ring>([x, y, w]: [T; 3]) -> Vector<T> {
         Vector {
             a0: w,
             a1: x,
@@ -354,8 +364,9 @@ pub mod pga2d {
         }
     }
 
-    /// Rotor about unitized point p by twice the given angle
-    pub fn axis_angle<T: Ring + Trig + Sqrt>(axis: Vector<T>, half_phi: T) -> AntiEven<T> {
+    /// Rotor about unitized point p by the given angle
+    pub fn axis_angle<T: Ring + Rational + Trig>(axis: Vector<T>, phi: T) -> AntiEven<T> {
+        let half_phi = phi * T::one_half();
         axis * half_phi.sin() + anti(half_phi.cos())
     }
 
@@ -365,10 +376,9 @@ pub mod pga2d {
         p.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }
 
-    /// Translator towards ideal point p by twice its weight
-    pub fn translator<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
-        // TODO rewrite as expansion
-        origin().wedge(p).weight_dual() + anti(T::one())
+    /// Translator towards ideal point p by its magnitude
+    pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
+        origin().wedge(p).weight_dual() * T::one_half() + anti(T::one())
     }
 }
 
@@ -425,7 +435,7 @@ pub mod pga3d {
         }
     }
 
-    pub fn point_ideal<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
+    pub fn ideal_point<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
         Vector {
             a0: T::zero(),
             a1: x,
@@ -434,7 +444,7 @@ pub mod pga3d {
         }
     }
 
-    pub fn point_homogeneous<T: Ring>([x, y, z, w]: [T; 4]) -> Vector<T> {
+    pub fn homogeneous_point<T: Ring>([x, y, z, w]: [T; 4]) -> Vector<T> {
         Vector {
             a0: w,
             a1: x,
@@ -453,8 +463,9 @@ pub mod pga3d {
         }
     }
 
-    /// Rotor about unitized line l by twice the given angle
-    pub fn axis_angle<T: Ring + Trig + Sqrt>(axis: Bivector<T>, half_phi: T) -> AntiEven<T> {
+    /// Rotor about unitized line l by the given angle
+    pub fn axis_angle<T: Ring + Rational + Trig>(axis: Bivector<T>, phi: T) -> AntiEven<T> {
+        let half_phi = phi * T::one_half();
         axis * half_phi.sin() + anti(half_phi.cos())
     }
 
@@ -464,18 +475,18 @@ pub mod pga3d {
         l.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }
 
-    /// Translator towards ideal point p by twice its weight
-    pub fn translator<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
-        // TODO rewrite as expansion
-        origin().wedge(p).weight_dual() + anti(T::one())
+    /// Translator towards ideal point p by its magnitude
+    pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
+        origin().wedge(p).weight_dual() * T::one_half() + anti(T::one())
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::blade::{
-        AntiCommutator, AntiWedge, AntiWedgeDot, BulkNorm, BulkNormSquared, MotorTo,
-        RightComplement, Transform, Unitized, Wedge, WeightDual, WeightNorm, WeightNormSquared,
+        AntiCommutator, AntiProjection, AntiWedge, AntiWedgeDot, BulkNorm, BulkNormSquared,
+        CentralProjection, MotorTo, Projection, RightComplement, Transform, Unitized, Wedge,
+        WeightDual, WeightExpansion, WeightNorm, WeightNormSquared,
     };
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
@@ -549,7 +560,40 @@ mod test {
         }
     }
 
+    impl IsClose for pga2d::Bivector<f32> {
+        fn is_close(self, rhs: Self) -> bool {
+            let tol = 1e-5;
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
+        }
+    }
+
     impl IsClose for pga3d::Vector<f32> {
+        fn is_close(self, rhs: Self) -> bool {
+            let tol = 1e-5;
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
+        }
+    }
+
+    impl IsClose for pga3d::Bivector<f32> {
+        fn is_close(self, rhs: Self) -> bool {
+            let tol = 1e-5;
+            let diff = self - rhs;
+            // Taking the right complement allows us to get the weight norm as a scalar
+            // rather than an antiscalar
+            diff.bulk_norm_squared() < tol * tol
+                && diff.weight_norm_squared().right_complement() < tol * tol
+        }
+    }
+
+    impl IsClose for pga3d::Trivector<f32> {
         fn is_close(self, rhs: Self) -> bool {
             let tol = 1e-5;
             let diff = self - rhs;
@@ -770,7 +814,7 @@ mod test {
         let l = pga2d::origin::<f32>()
             .wedge(pga2d::point([1., 0.]))
             .unitized();
-        let expected_dir = pga2d::point_ideal([0., 1.]);
+        let expected_dir = pga2d::ideal_point([0., 1.]);
 
         let d = l.weight_dual();
 
@@ -784,7 +828,7 @@ mod test {
             .wedge(pga3d::point([0., 1., 0.]))
             .unitized();
 
-        let expected_dir = pga3d::point_ideal([0., 0., 1.]);
+        let expected_dir = pga3d::ideal_point([0., 0., 1.]);
 
         let d = p.weight_dual();
 
@@ -800,7 +844,7 @@ mod test {
         let inf_line = l.weight_dual();
 
         let expected_inf_line =
-            pga3d::point_ideal([0., 0., 1.]).wedge(pga3d::point_ideal([1., 0., 0.]));
+            pga3d::ideal_point([0., 0., 1.]).wedge(pga3d::ideal_point([1., 0., 0.]));
 
         assert!((inf_line - expected_inf_line).weight_norm_squared() < pga3d::anti(1e-5 * 1e-5));
     }
@@ -808,7 +852,7 @@ mod test {
     #[test]
     fn test_2d_rotation() {
         let p = pga2d::point([1., 0.]);
-        let motor = pga2d::axis_angle(pga2d::origin(), 0.125 * core::f32::consts::TAU);
+        let motor = pga2d::axis_angle(pga2d::origin(), 0.25 * core::f32::consts::TAU);
         assert_close!(p.transform(motor), pga2d::point([0., 1.]));
     }
 
@@ -818,7 +862,7 @@ mod test {
         let l = pga3d::origin::<f32>()
             .wedge(pga3d::point([0., 0., 1.]))
             .unitized();
-        let motor = pga3d::axis_angle(l, 0.125 * core::f32::consts::TAU);
+        let motor = pga3d::axis_angle(l, 0.25 * core::f32::consts::TAU);
         assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
     }
 
@@ -826,7 +870,7 @@ mod test {
     fn test_2d_translation() {
         let p1 = pga2d::point([10., 10.]);
 
-        let motor = pga2d::translator(pga2d::point_ideal([0., 2.5]));
+        let motor = pga2d::translator(pga2d::ideal_point([0., 5.]));
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga2d::point([10., 15.]));
@@ -836,7 +880,7 @@ mod test {
     fn test_3d_translation() {
         let p1 = pga3d::point([10., 10., 10.]);
 
-        let motor = pga3d::translator(pga3d::point_ideal([0., 2.5, 0.]));
+        let motor = pga3d::translator(pga3d::ideal_point([0., 5., 0.]));
 
         let p2 = p1.transform(motor);
         assert_close!(p2, pga3d::point([10., 15., 10.]));
@@ -867,8 +911,8 @@ mod test {
     fn test_2d_compose_rotations() {
         let p = pga2d::point([10., 10.]);
 
-        let translate_up_5 = pga2d::translator(pga2d::point_ideal([0., 2.5]));
-        let rotate_90 = pga2d::axis_angle(pga2d::origin(), 0.125 * core::f32::consts::TAU);
+        let translate_up_5 = pga2d::translator(pga2d::ideal_point([0., 5.]));
+        let rotate_90 = pga2d::axis_angle(pga2d::origin(), 0.25 * core::f32::consts::TAU);
 
         let up_then_rotate = translate_up_5.anti_wedge_dot(rotate_90);
         assert_close!(p.transform(up_then_rotate), pga2d::point([-15., 10.]));
@@ -887,6 +931,117 @@ mod test {
 
         let p = pga2d::origin();
         assert_close!(p.transform(motor), pga2d::point([0., 20.]));
+    }
+
+    #[test]
+    fn test_2d_expansion() {
+        let l = pga2d::origin().wedge(pga2d::point([1., 1.])).unitized();
+        let p = pga2d::point([0., 2.]);
+        let l2 = p.weight_expansion(l);
+
+        let expected_l2 = pga2d::point([1., 1.]).wedge(p).unitized();
+
+        assert_close!(l2, expected_l2);
+    }
+
+    #[test]
+    fn test_3d_expansion() {
+        let pl = pga3d::origin()
+            .wedge(pga3d::point([0., 0., 10.]))
+            .wedge(pga3d::point([1., 1., 10.]))
+            .unitized();
+        let p = pga3d::point([0., 2., 10.]);
+        let l = p.weight_expansion(pl);
+
+        let expected_l = pga3d::point([1., 1., 10.]).wedge(p).unitized();
+
+        assert_close!(l, expected_l);
+    }
+
+    #[test]
+    fn test_2d_projection() {
+        let l = pga2d::origin().wedge(pga2d::point([1., 1.])).unitized();
+        let p = pga2d::point([0., 2.]);
+        let p2 = p.projection(l).unitized();
+
+        assert_close!(p2, pga2d::point([1., 1.]));
+    }
+
+    #[test]
+    fn test_3d_projection_pt_onto_plane() {
+        let pl = pga3d::origin()
+            .wedge(pga3d::point([0., 0., 10.]))
+            .wedge(pga3d::point([1., 1., 10.]))
+            .unitized();
+        let p = pga3d::point([0., 2., 10.]);
+        let p2 = p.projection(pl).unitized();
+
+        assert_close!(p2, pga3d::point([1., 1., 10.]));
+    }
+
+    #[test]
+    fn test_2d_anti_projection() {
+        let l = pga2d::origin().wedge(pga2d::point([1., 1.])).unitized();
+        let p = pga2d::point([0., 2.]);
+        let l2 = l.anti_projection(p).unitized();
+
+        let expected_l2 = p.wedge(pga2d::ideal_point([1., 1.])).unitized();
+        assert_close!(l2, expected_l2);
+    }
+
+    #[test]
+    fn test_3d_anti_projection_plane_onto_pt() {
+        let pl = pga3d::origin()
+            .wedge(pga3d::point([0., 0., 10.]))
+            .wedge(pga3d::point([1., 1., 10.]))
+            .unitized();
+        let p = pga3d::point([0., 2., 10.]);
+        let pl2 = pl.anti_projection(p).unitized();
+
+        let expected_pl2 = p
+            .wedge(pga3d::ideal_point([0., 0., 1.]))
+            .wedge(pga3d::ideal_point([1., 1., 10.]))
+            .unitized();
+
+        assert_close!(pl2, expected_pl2);
+    }
+
+    #[test]
+    fn test_3d_projection_line_onto_plane() {
+        let pl = pga3d::point([0., 0., 10.])
+            .wedge(pga3d::point([1., 0., 10.]))
+            .wedge(pga3d::point([0., 1., 10.]))
+            .unitized();
+        let l = pga3d::point([0., 20., 20.])
+            .wedge(pga3d::point([1., 20., 20.]))
+            .unitized();
+
+        let l2 = l.projection(pl).unitized();
+
+        let expected_l2 = pga3d::point([0., 20., 10.])
+            .wedge(pga3d::point([1., 20., 10.]))
+            .unitized();
+
+        assert_close!(l2, expected_l2);
+    }
+
+    #[test]
+    fn test_3d_central_projection_line_onto_plane() {
+        let pl = pga3d::point([0., 0., 10.])
+            .wedge(pga3d::point([1., 0., 10.]))
+            .wedge(pga3d::point([0., 1., 10.]))
+            .unitized();
+        let l = pga3d::point([0., 20., 20.])
+            .wedge(pga3d::point([1., 20., 20.]))
+            .unitized();
+
+        let l2 = l.central_projection(pl).unitized();
+
+        let expected_l2 = pga3d::point([0., 10., 10.])
+            .wedge(pga3d::point([1., 10., 10.]))
+            .unitized();
+
+        assert_close!(l2, expected_l2);
     }
 
     /*
@@ -937,7 +1092,7 @@ mod test {
         // 2D translation
         let p1 = pga2d::point([10., 10.]);
 
-        let center = pga2d::point_ideal([1., 0.]) * -2.5;
+        let center = pga2d::ideal_point([1., 0.]) * -2.5;
         let motor = center.exp();
 
         let p2 = p1.transform(motor);
