@@ -1180,6 +1180,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         })
                         .collect();
                     let name = &obj.name;
+                    // TODO can we get rid of the Ring trait bound here?
                     quote! {
                         #[derive(Clone, Copy)]
                         pub struct #name <T: Ring> {
@@ -1199,8 +1200,9 @@ fn gen_algebra2(input: Input) -> TokenStream {
         let field = coefficient_ident("a", &basis[basis.len() - 1]);
 
         quote! {
-            impl<T: Ring + Recip> AntiRecip for AntiScalar<T> {
-                fn anti_recip(self) -> AntiScalar<T> {
+            impl<T: Ring + Recip<Output: Ring>> AntiRecip for AntiScalar<T> {
+                type Output = AntiScalar<<T as Recip>::Output>;
+                fn anti_recip(self) -> Self::Output {
                     AntiScalar {
                         #field: self.#field.recip(),
                     }
@@ -1215,18 +1217,20 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             }
 
-            impl<T: Ring + Trig> AntiTrig for AntiScalar<T> {
-                fn anti_cos(self) -> AntiScalar<T> {
+            impl<T: Ring + Trig<Output: Ring>> AntiTrig for AntiScalar<T> {
+                type Output = AntiScalar<<T as Trig>::Output>;
+
+                fn anti_cos(self) -> Self::Output {
                     AntiScalar {
                         #field: self.#field.cos(),
                     }
                 }
-                fn anti_sin(self) -> AntiScalar<T> {
+                fn anti_sin(self) -> Self::Output {
                     AntiScalar {
                         #field: self.#field.sin(),
                     }
                 }
-                fn anti_sinc(self) -> AntiScalar<T> {
+                fn anti_sinc(self) -> Self::Output {
                     AntiScalar {
                         #field: self.#field.sinc(),
                     }
@@ -1618,7 +1622,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             let hat_code = if !obj.is_scalar {
                 let type_name = obj.type_name();
                 quote! {
-                    impl<T: Ring + Recip> Normalized for #type_name
+                    impl<T: Ring + Recip<Output=T>> Normalized for #type_name
                     where
                         Self: BulkNorm<Output=T>
                     {
@@ -1628,7 +1632,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         }
                     }
 
-                    impl<T: Ring + Recip> Unitized for #type_name
+                    impl<T: Ring + Recip<Output=T>> Unitized for #type_name
                     where
                         Self: WeightNorm<Output=AntiScalar<T>>
                     {

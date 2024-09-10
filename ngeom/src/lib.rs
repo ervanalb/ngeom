@@ -1,5 +1,42 @@
+//! ngeom is a library for doing geometry in N dimensions.
+//!
+//! ngeom provides primitives for points, lines, planes, etc.,
+//! along with rigid transformations (rotations, translations, and reflections.)
+//!
+//! ngeom uses [homogeneous coordinates](https://en.wikipedia.org/wiki/Homogeneous_coordinates) to express ideal/infinite points,
+//! ideal/infinite lines, etc. and to provide for exception-free [meet](ops::Meet) & [join](ops::Join) operations.
+//!
+//! ngeom is generic over the [scalar] datatype, and can be used with f32, f64, or custom datatypes.
+//! It can even use integers, with some restrictions--
+//! most functionality requires only [scalar addition and multiplication](scalar::Ring).
+//!
+//! ngeom ships with modules for [2D](pga2d) and [3D](pga3d) Euclidean space.
+//! Modules for spaces with different dimensionality or metric can be written with the help of
+//! auto-generated operations implementations from the [provided macro](ngeom_macros::gen_algebra).
+//! With some effort, usage code can be written to be generic
+//! over the dimensionality or even the metric of the space.
+//!
+//! Under the hood, ngeom is able to make these generalizations by using [geometric algebra](https://en.wikipedia.org/wiki/Geometric_algebra).
+//! Understanding geometric algebra is helpful but optional,
+//! as the functions are named for their geometric interpretation.
+//! Lower-level functions named after their [geometric algebra expressions](algebraic_ops) are available if needed.
+
+/// Traits that govern the scalar data type used by ngeom
+///
+/// Because geometric operations are generally done through various sums and products,
+/// the scalar datatype needs only be a [Ring] for most functionality to work.
+/// `Ring` comes
 pub mod scalar {
     use core::ops::{Add, Mul, Neg, Sub};
+
+    /// A scalar datatype which is closed under addition and multiplication.
+    ///
+    /// see <https://en.wikipedia.org/wiki/Ring_(mathematics)>
+    /// `Ring` is implemented for `f32`, `f64`, and `i8` through `i128`
+    ///
+    /// `Ring` requires that its datatype is `Copy` to avoid the need to clone or borrow when writing
+    /// mathematical expressions. If your scalar datatype is expensive to copy,
+    /// consider implementing `Ring` on a reference-counted container that is `Copy`.
     pub trait Ring:
         Clone
         + Copy
@@ -8,26 +45,162 @@ pub mod scalar {
         + Mul<Self, Output = Self>
         + Sub<Self, Output = Self>
     {
+        /// The additive identity
         fn zero() -> Self;
+
+        /// The multiplicative identity
         fn one() -> Self;
     }
 
+    /// A scalar datatype which can represent fractional values such as ½.
+    ///
+    /// In homogeneous coordinates, rational numbers are rarely needed due to the `w` coordinate
+    /// which in many cases can act as the denominator of an integer coordinate.
+    /// However, since the application of a motor causes a motion
+    /// that is twice that of the geometry it is built from,
+    /// it is often desirable to divide an angle or a distance by 2
+    /// which, in most cases, cannot be accomplished
+    /// by altering the weight of the support geometry.
+    ///
+    /// Failing to implement `Rational` means that certain functions for constructing motors
+    /// will not be available.
+    ///
+    /// `Rational` comes implemented for `f32` and `f64`.
     pub trait Rational {
+        /// A scalar value that when added to itself, equals [one](Ring::one)
         fn one_half() -> Self;
     }
 
+    /// A scalar datatype which is closed under the square root function.
+    ///
+    /// Taking the square root is used frequently in geometry,
+    /// such as when taking [norms](ops::WeightNorm)
+    /// or halving the motion of a motor.
+    ///
+    /// Failing to implement `Sqrt` means that some [norms](ops::WeightNorm) may not be available.
+    /// Norms whose square root can be taken symbolically will still be available.
+    /// [Squared norms](ops::WeightNormSquared) will always be available.
+    ///
+    /// When given a negative value,
+    /// this function must either return a valid scalar datatype (e.g. `f32::NaN`)
+    /// or panic. There are no other provisions for exception handling at this level.
+    ///
+    /// That being said, all uses of `sqrt()` within the library
+    /// are on values that are guaranteed by design to be non-negative,
+    /// making internal use exception-free.
+    ///
+    /// For this reason, `Sqrt` comes implemented for `f32` and `f64`.
     pub trait Sqrt {
+        // This scalar's positive square root. Only valid for non-negative numbers.
         fn sqrt(self) -> Self;
     }
 
+    /// A scalar datatype which implements trigonometric functions.
+    ///
+    /// Taking sines and cosines of angles is used frequently in geometry,
+    /// such as when constructing [rotors](pga3d::axis_angle).
+    ///
+    /// Failing to implement `Trig` means that motors may only be constructed from geometry,
+    /// and things like slerp will not be possible.
+    ///
+    /// Unlike most of the other scalar traits here,
+    /// `Trig` allows for a different input and output type.
+    /// This allows the library user to draw a distinction between
+    /// linear quantities (e.g. output of `sin()`)
+    /// and angular quantities (e.g. input of `sin()`.)
+    ///
+    /// `Trig` comes implemented for `f32` → `f32` and `f64` → `f64`.
     pub trait Trig {
-        fn cos(self) -> Self;
-        fn sin(self) -> Self;
-        fn sinc(self) -> Self;
+        // The scalar datatype for linear quantities
+        // (output of `sin()` and `cos()`)
+        type Output;
+
+        // The cosine of a scalar (in radians)
+        fn cos(self) -> Self::Output;
+
+        // The sine of a scalar (in radians)
+        fn sin(self) -> Self::Output;
+
+        // Computes sin(x) / x
+        // (including at `0`, where the result should be `1`)
+        fn sinc(self) -> Self::Output;
     }
 
+    /// A scalar datatype whose reciprocal can be taken.
+    /// Implementing this trait enables some convenience functions,
+    /// but is generally not safe given the possibility of dividing by zero.
+    ///
+    /// In homogeneous coordinates, division is rarely needed due to the `w` coordinate,
+    /// which in many cases can act as the denominator of an integer coordinate.
+    /// Division becomes necessary when it comes time to
+    /// [unitize()](ops::Unitize) or [normalize()](ops::Normalize) geometry,
+    /// projecting it down so that its [weight](ops::WeightNorm) or [bulk norm](ops::BulkNorm) becomes unity.
+    /// Failing to implement `Recip` means that these convenience methods will not be available.
+    ///
+    /// When given an input of zero,
+    /// this function must return a valid scalar datatype (e.g. `f32::NaN`)
+    /// or panic.
+    /// There are no other provisions for exception handling at this level.
+    ///
+    /// For scalar datatypes that may be zero, this operation is NOT exception-free,
+    /// including internal to the library.
+    ///
+    /// If you want your code to be panic-free and NaN-free, you have 2 options.
+    /// Both involve the usage code deciding how it wants to handle these exceptions
+    /// at a higher level, before attempting to take the reciprocal of zero.
+    /// (Different operations may have different tolerances for how close to zero is acceptable.)
+    ///
+    /// ## Option 1: Avoid `Recip` altogether
+    ///
+    /// ```rust
+    /// use ngeom::pga2d::{Vector, Bivector};
+    /// use ngeom::ops::{Meet, WeightNormSquared};
+    /// use ngeom::scalar::{AntiSqrt, AntiRecip};
+    ///
+    /// /// Return the unitized point of intersection of two unitized lines,
+    /// /// or None if they are parallel
+    /// fn try_meet(l1: Bivector<f32>, l2: Bivector<f32>) -> Option<Vector<f32>> {
+    ///   const PARALLEL_EPSILON: f32 = 1e-5;
+    ///
+    ///   let result = l1.meet(l2);
+    ///   let sq_norm = result.weight_norm_squared();
+    ///   if sq_norm.into() < PARALLEL_EPSILON * PARALLEL_EPSILON {
+    ///     return None;
+    ///   }
+    ///   // XXX FIX ME!
+    ///   Some(result * sq_norm.anti_sqrt().anti_recip())
+    /// }
+    /// ```
+    ///
+    /// ## Option 2: Introduce a branded scalar type that can't be zero
+    ///
+    /// ```rust
+    /// // TODO Write this!
+    /// ```
+    ///
+    /// Because of its unsafe nature, this library does not ship any `Recip` implementations.
+    /// Adding an implementation like this will enable `unitize()` and `normalize()`:
+    ///
+    /// ```rust
+    /// // TODO implement `Recip` differently to avoid panics in production!
+    /// use ngeom::scalar::Recip;
+    ///
+    /// impl Recip for f32 {
+    ///     type Output = f32;
+    ///
+    ///     fn recip(self) -> f32 {
+    ///         let result = self.recip();
+    ///
+    ///         // Crude error handling to panic on Inf and NaN
+    ///         assert!(result.is_finite());
+    ///
+    ///         result
+    ///     }
+    /// }
+    /// ```
     pub trait Recip: Sized {
-        fn recip(self) -> Self;
+        type Output;
+        fn recip(self) -> Self::Output;
     }
 
     pub trait AntiMul<RHS = Self> {
@@ -36,7 +209,8 @@ pub mod scalar {
     }
 
     pub trait AntiRecip {
-        fn anti_recip(self) -> Self;
+        type Output;
+        fn anti_recip(self) -> Self::Output;
     }
 
     pub trait AntiSqrt {
@@ -44,9 +218,11 @@ pub mod scalar {
     }
 
     pub trait AntiTrig {
-        fn anti_cos(self) -> Self;
-        fn anti_sin(self) -> Self;
-        fn anti_sinc(self) -> Self;
+        type Output;
+
+        fn anti_cos(self) -> Self::Output;
+        fn anti_sin(self) -> Self::Output;
+        fn anti_sinc(self) -> Self::Output;
     }
 
     macro_rules! impl_for_float {
@@ -73,6 +249,8 @@ pub mod scalar {
             }
 
             impl Trig for $type {
+                type Output = $type;
+
                 fn cos(self) -> $type {
                     self.cos()
                 }
@@ -110,6 +288,7 @@ pub mod scalar {
     impl_for_int!(i128);
 }
 
+/// Low-level geometric algebra operations
 pub mod algebraic_ops {
     pub trait Reverse {
         type Output;
@@ -149,26 +328,6 @@ pub mod algebraic_ops {
     pub trait LeftComplement {
         type Output;
         fn left_complement(self) -> Self::Output;
-    }
-
-    pub trait BulkNormSquared {
-        type Output;
-        fn bulk_norm_squared(self) -> Self::Output;
-    }
-
-    pub trait WeightNormSquared {
-        type Output;
-        fn weight_norm_squared(self) -> Self::Output;
-    }
-
-    pub trait BulkNorm {
-        type Output;
-        fn bulk_norm(self) -> Self::Output;
-    }
-
-    pub trait WeightNorm {
-        type Output;
-        fn weight_norm(self) -> Self::Output;
     }
 
     pub trait Wedge<T> {
@@ -221,6 +380,69 @@ pub mod algebraic_ops {
         fn weight_expansion(self, r: T) -> Self::Output;
     }
 
+    pub trait AntiCommutator<T> {
+        type Output;
+        fn anti_commutator(self, r: T) -> Self::Output;
+    }
+
+    pub trait ExpAntiWedgeDot {
+        type Output;
+        fn exp_anti_wedge_dot(self) -> Self::Output;
+    }
+}
+
+/// Geometric operations
+pub mod ops {
+    pub trait BulkNormSquared {
+        type Output;
+        fn bulk_norm_squared(self) -> Self::Output;
+    }
+
+    pub trait WeightNormSquared {
+        type Output;
+        fn weight_norm_squared(self) -> Self::Output;
+    }
+
+    pub trait BulkNorm {
+        type Output;
+        fn bulk_norm(self) -> Self::Output;
+    }
+
+    pub trait WeightNorm {
+        type Output;
+        fn weight_norm(self) -> Self::Output;
+    }
+
+    pub trait Join<T> {
+        type Output;
+        fn join(self, r: T) -> Self::Output;
+    }
+
+    pub trait Meet<T> {
+        type Output;
+        fn meet(self, r: T) -> Self::Output;
+    }
+
+    pub trait Compose<T> {
+        type Output;
+        fn compose(self, r: T) -> Self::Output;
+    }
+
+    pub trait Normal {
+        type Output;
+        fn normal(self) -> Self::Output;
+    }
+
+    pub trait SubsetOrthogonalTo<T> {
+        type Output;
+        fn subset_orthogonal_to(self, r: T) -> Self::Output;
+    }
+
+    pub trait SupersetOrthogonalTo<T> {
+        type Output;
+        fn superset_orthogonal_to(self, r: T) -> Self::Output;
+    }
+
     pub trait Projection<T> {
         type Output;
         fn projection(self, r: T) -> Self::Output;
@@ -244,16 +466,6 @@ pub mod algebraic_ops {
     pub trait Transform<T> {
         type Output;
         fn transform(self, r: T) -> Self;
-    }
-
-    pub trait AntiCommutator<T> {
-        type Output;
-        fn anti_commutator(self, r: T) -> Self::Output;
-    }
-
-    pub trait ExpAntiWedgeDot {
-        type Output;
-        fn exp_anti_wedge_dot(self) -> Self::Output;
     }
 
     pub trait Normalized {
@@ -298,43 +510,7 @@ pub mod algebraic_ops {
     impl_for_builtin!(i128);
 }
 
-pub mod ops {
-    pub use super::algebraic_ops::{
-        AntiProjection, BulkNorm, BulkNormSquared, CentralProjection, MotorTo, Normalized,
-        Projection, Transform, Unitized, WeightNorm, WeightNormSquared,
-    };
-
-    pub trait Join<T> {
-        type Output;
-        fn join(self, r: T) -> Self::Output;
-    }
-
-    pub trait Meet<T> {
-        type Output;
-        fn meet(self, r: T) -> Self::Output;
-    }
-
-    pub trait Compose<T> {
-        type Output;
-        fn compose(self, r: T) -> Self::Output;
-    }
-
-    pub trait Normal {
-        type Output;
-        fn normal(self) -> Self::Output;
-    }
-
-    pub trait SubsetOrthogonalTo<T> {
-        type Output;
-        fn subset_orthogonal_to(self, r: T) -> Self::Output;
-    }
-
-    pub trait SupersetOrthogonalTo<T> {
-        type Output;
-        fn superset_orthogonal_to(self, r: T) -> Self::Output;
-    }
-}
-
+/// Projective geometry for 2D Euclidean space
 pub mod pga2d {
     use crate::algebraic_ops::*;
     use crate::ops::*;
@@ -423,13 +599,16 @@ pub mod pga2d {
     }
 
     /// Rotor about unitized point p by the given angle
-    pub fn axis_angle<T: Ring + Rational + Trig>(axis: Vector<T>, phi: T) -> AntiEven<T> {
-        let half_phi = phi * T::one_half();
+    pub fn axis_angle<T: Ring, A: Ring + Rational + Trig<Output = T>>(
+        axis: Vector<T>,
+        phi: A,
+    ) -> AntiEven<T> {
+        let half_phi = phi * A::one_half();
         axis * half_phi.sin() + AntiScalar::from(half_phi.cos())
     }
 
     /// Rotor about point p by twice its weight
-    pub fn rotor<T: Ring + Trig>(p: Vector<T>) -> AntiEven<T> {
+    pub fn rotor<T: Ring + Trig<Output = T>>(p: Vector<T>) -> AntiEven<T> {
         let half_phi = p.weight_norm();
         p.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }
@@ -440,6 +619,7 @@ pub mod pga2d {
     }
 }
 
+/// Projective geometry for 3D Euclidean space
 pub mod pga3d {
     use crate::algebraic_ops::*;
     use crate::ops::*;
@@ -484,7 +664,7 @@ pub mod pga3d {
         }
     }
 
-    impl<T: Ring + Sqrt + Recip> Magnitude<T> {
+    impl<T: Ring + Sqrt + Recip<Output = T>> Magnitude<T> {
         pub fn rsqrt(self) -> Magnitude<T> {
             let Magnitude { a: s, a0123: p } = self;
             let sqrt_s = s.sqrt();
@@ -494,10 +674,6 @@ pub mod pga3d {
                 a0123: p * (sqrt_s_cubed + sqrt_s_cubed).recip(),
             }
         }
-    }
-
-    pub fn anti<T: Ring>(a0123: T) -> AntiScalar<T> {
-        AntiScalar { a0123 }
     }
 
     pub fn origin<T: Ring>() -> Vector<T> {
@@ -547,13 +723,16 @@ pub mod pga3d {
     }
 
     /// Rotor about unitized line l by the given angle
-    pub fn axis_angle<T: Ring + Rational + Trig>(axis: Bivector<T>, phi: T) -> AntiEven<T> {
-        let half_phi = phi * T::one_half();
+    pub fn axis_angle<T: Ring, A: Ring + Rational + Trig<Output = T>>(
+        axis: Bivector<T>,
+        phi: A,
+    ) -> AntiEven<T> {
+        let half_phi = phi * A::one_half();
         axis * half_phi.sin() + AntiScalar::from(half_phi.cos())
     }
 
     /// Rotor about line l by its weight
-    pub fn rotor<T: Ring + Rational + Trig + Sqrt>(l: Bivector<T>) -> AntiEven<T> {
+    pub fn rotor<T: Ring + Rational + Trig<Output = T> + Sqrt>(l: Bivector<T>) -> AntiEven<T> {
         let half_phi = l.weight_norm() * T::one_half();
         l.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }
@@ -574,9 +753,16 @@ mod test {
     use super::scalar::Recip;
     use super::{pga2d, pga3d};
 
+    // This is a crude implementation of recip for unit testing--
+    // it is not NaN-safe!
+    // Not recommended for use in production
     impl Recip for f32 {
+        type Output = f32;
+
         fn recip(self) -> f32 {
-            self.recip()
+            let result = self.recip();
+            assert!(result.is_finite());
+            result
         }
     }
 
