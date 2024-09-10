@@ -24,8 +24,7 @@
 /// Traits that govern the scalar data type used by ngeom
 ///
 /// Because geometric operations are generally done through various sums and products,
-/// the scalar datatype needs only be a [Ring] for most functionality to work.
-/// `Ring` comes
+/// the scalar datatype needs only be a [Ring](scalar::Ring) for most functionality to work.
 pub mod scalar {
     use core::ops::{Add, Mul, Neg, Sub};
 
@@ -74,12 +73,16 @@ pub mod scalar {
     /// A scalar datatype which is closed under the square root function.
     ///
     /// Taking the square root is used frequently in geometry,
-    /// such as when taking [norms](ops::WeightNorm)
+    /// such as when taking [norms](crate::ops::WeightNorm)
     /// or halving the motion of a motor.
     ///
-    /// Failing to implement `Sqrt` means that some [norms](ops::WeightNorm) may not be available.
+    /// Failing to implement `Sqrt` means that some [norms](crate::ops::WeightNorm) may not be available.
     /// Norms whose square root can be taken symbolically will still be available.
-    /// [Squared norms](ops::WeightNormSquared) will always be available.
+    /// [Squared norms](crate::ops::WeightNormSquared) will always be available.
+    ///
+    /// `Sqrt` comes implemented for `f32` and `f64`.
+    ///
+    /// ## `sqrt()` of negative numbers
     ///
     /// When given a negative value,
     /// this function must either return a valid scalar datatype (e.g. `f32::NaN`)
@@ -87,9 +90,7 @@ pub mod scalar {
     ///
     /// That being said, all uses of `sqrt()` within the library
     /// are on values that are guaranteed by design to be non-negative,
-    /// making internal use exception-free.
-    ///
-    /// For this reason, `Sqrt` comes implemented for `f32` and `f64`.
+    /// making internal use NaN-free.
     pub trait Sqrt {
         // This scalar's positive square root. Only valid for non-negative numbers.
         fn sqrt(self) -> Self;
@@ -98,7 +99,7 @@ pub mod scalar {
     /// A scalar datatype which implements trigonometric functions.
     ///
     /// Taking sines and cosines of angles is used frequently in geometry,
-    /// such as when constructing [rotors](pga3d::axis_angle).
+    /// such as when constructing [rotors](crate::pga3d::axis_angle).
     ///
     /// Failing to implement `Trig` means that motors may only be constructed from geometry,
     /// and things like slerp will not be possible.
@@ -133,69 +134,76 @@ pub mod scalar {
     /// In homogeneous coordinates, division is rarely needed due to the `w` coordinate,
     /// which in many cases can act as the denominator of an integer coordinate.
     /// Division becomes necessary when it comes time to
-    /// [unitize()](ops::Unitize) or [normalize()](ops::Normalize) geometry,
-    /// projecting it down so that its [weight](ops::WeightNorm) or [bulk norm](ops::BulkNorm) becomes unity.
+    /// [unitize](crate::ops::Unitized) or [normalize](crate::ops::Normalized) geometry,
+    /// projecting it down so that its [weight](crate::ops::WeightNorm) or [bulk norm](crate::ops::BulkNorm) becomes unity.
     /// Failing to implement `Recip` means that these convenience methods will not be available.
     ///
+    /// `Recip` comes implemented for `f32` → `f32` and `f64` → `f64`.
+    ///
+    /// ## `recip()` of `0`
+    ///
     /// When given an input of zero,
-    /// this function must return a valid scalar datatype (e.g. `f32::NaN`)
-    /// or panic.
+    /// this function must return a valid scalar datatype (e.g. `f32::NaN`) or panic.
     /// There are no other provisions for exception handling at this level.
     ///
-    /// For scalar datatypes that may be zero, this operation is NOT exception-free,
+    /// For scalar datatypes that may be zero, this operation is NOT NaN-free,
     /// including internal to the library.
     ///
-    /// If you want your code to be panic-free and NaN-free, you have 2 options.
-    /// Both involve the usage code deciding how it wants to handle these exceptions
-    /// at a higher level, before attempting to take the reciprocal of zero.
-    /// (Different operations may have different tolerances for how close to zero is acceptable.)
+    /// An easy but error-prone solution is to check before calling `recip()`:
     ///
-    /// ## Option 1: Avoid `Recip` altogether
-    ///
-    /// ```rust
-    /// use ngeom::pga2d::{Vector, Bivector};
-    /// use ngeom::ops::{Meet, WeightNormSquared};
-    /// use ngeom::scalar::{AntiSqrt, AntiRecip};
+    /// ```
+    /// use ngeom::pga2d::*;
+    /// use ngeom::ops::*;
+    /// use ngeom::scalar::*;
     ///
     /// /// Return the unitized point of intersection of two unitized lines,
     /// /// or None if they are parallel
     /// fn try_meet(l1: Bivector<f32>, l2: Bivector<f32>) -> Option<Vector<f32>> {
-    ///   const PARALLEL_EPSILON: f32 = 1e-5;
+    ///     const PARALLEL_EPSILON: f32 = 1e-5;
     ///
-    ///   let result = l1.meet(l2);
-    ///   let sq_norm = result.weight_norm_squared();
-    ///   if sq_norm.into() < PARALLEL_EPSILON * PARALLEL_EPSILON {
-    ///     return None;
-    ///   }
-    ///   // XXX FIX ME!
-    ///   Some(result * sq_norm.anti_sqrt().anti_recip())
+    ///     let result = l1.meet(l2);
+    ///     let norm: f32 = result.weight_norm().into();
+    ///     if norm.abs() < PARALLEL_EPSILON { return None; } // Don't forget!
+    ///     Some(result * norm.recip())
     /// }
     /// ```
     ///
-    /// ## Option 2: Introduce a branded scalar type that can't be zero
+    /// If you desire stronger NaN-free enforcement, consider using branded float types.
     ///
-    /// ```rust
-    /// // TODO Write this!
-    /// ```
+    /// ```ignore
+    /// // TODO this doesn't work yet!
+    /// use ngeom::pga2d::*;
+    /// use ngeom::ops::*;
+    /// use ngeom::scalar::*;
     ///
-    /// Because of its unsafe nature, this library does not ship any `Recip` implementations.
-    /// Adding an implementation like this will enable `unitize()` and `normalize()`:
+    /// /// f32 wrapper around real numbers that does not implement Recip
+    /// #[derive(Ring, Sqrt)]
+    /// struct R32(pub f32);
     ///
-    /// ```rust
-    /// // TODO implement `Recip` differently to avoid panics in production!
-    /// use ngeom::scalar::Recip;
-    ///
-    /// impl Recip for f32 {
-    ///     type Output = f32;
-    ///
-    ///     fn recip(self) -> f32 {
-    ///         let result = self.recip();
-    ///
-    ///         // Crude error handling to panic on Inf and NaN
-    ///         assert!(result.is_finite());
-    ///
-    ///         result
+    /// /// f32 wrapper that doesn't contain a value close to zero
+    /// #[derive(Sqrt<Output=R32>, Recip<Output=R32>)]
+    /// struct NonZeroR32(R32);
+    /// impl NonZeroR32 {
+    ///     pub fn new_checked(value: R32, min: R32) -> Option<NonZeroR32> {
+    ///         if value.abs() > min {
+    ///             NonZeroR32(value)
+    ///         } else {
+    ///             None
+    ///         }
     ///     }
+    /// }
+    ///
+    /// /// Return the unitized point of intersection of two unitized lines,
+    /// /// or None if they are parallel
+    /// fn try_meet(l1: Bivector<R32>, l2: Bivector<R32>) -> Option<Vector<R32>> {
+    ///     const PARALLEL_EPSILON: R32 = 1e-5;
+    ///
+    ///     let result = l1.meet(l2);
+    ///     let norm: R32 = result.weight_norm().into();
+    ///     let norm = NonZeroR32.new_checked(norm, PARALLEL_EPSILON)?;
+    ///     // Forgetting the above check would cause a compile-time error
+    ///     // since R32 doesn't implement Recip
+    ///     Some(result * norm.recip())
     /// }
     /// ```
     pub trait Recip: Sized {
@@ -260,6 +268,15 @@ pub mod scalar {
                 fn sinc(self) -> $type {
                     let self_adj = self.abs() + $type::EPSILON;
                     self_adj.sin() / self_adj
+                }
+            }
+
+            impl Recip for $type {
+                type Output = $type;
+
+                // This is not NaN-free, even for internal usage!
+                fn recip(self) -> $type {
+                    self.recip()
                 }
             }
         };
@@ -519,7 +536,7 @@ pub mod pga2d {
 
     gen_algebra!(0, 1, 1);
 
-    impl<T: Ring> From<T> for AntiScalar<T> {
+    impl<T> From<T> for AntiScalar<T> {
         fn from(value: T) -> AntiScalar<T> {
             AntiScalar { a012: value }
         }
@@ -581,7 +598,7 @@ pub mod pga2d {
         }
     }
 
-    pub fn homogeneous_point<T: Ring>([x, y, w]: [T; 3]) -> Vector<T> {
+    pub fn homogeneous_point<T>([x, y, w]: [T; 3]) -> Vector<T> {
         Vector {
             a0: w,
             a1: x,
@@ -590,7 +607,7 @@ pub mod pga2d {
     }
 
     /// Line with equation ax + by - c = 0
-    pub fn line<T: Ring>(a: T, b: T, c: T) -> Bivector<T> {
+    pub fn line<T>(a: T, b: T, c: T) -> Bivector<T> {
         Bivector {
             a12: c,
             a20: a,
@@ -703,7 +720,7 @@ pub mod pga3d {
         }
     }
 
-    pub fn homogeneous_point<T: Ring>([x, y, z, w]: [T; 4]) -> Vector<T> {
+    pub fn homogeneous_point<T>([x, y, z, w]: [T; 4]) -> Vector<T> {
         Vector {
             a0: w,
             a1: x,
@@ -713,7 +730,7 @@ pub mod pga3d {
     }
 
     /// Plane with equation ax + by + cz - d = 0
-    pub fn plane<T: Ring>(a: T, b: T, c: T, d: T) -> Trivector<T> {
+    pub fn plane<T>(a: T, b: T, c: T, d: T) -> Trivector<T> {
         Trivector {
             a123: d,
             a032: a,
@@ -745,26 +762,8 @@ pub mod pga3d {
 
 #[cfg(test)]
 mod test {
-    use super::ops::{
-        AntiProjection, BulkNorm, BulkNormSquared, CentralProjection, Compose, Join, Meet, MotorTo,
-        Normal, Projection, SupersetOrthogonalTo, Transform, Unitized, WeightNorm,
-        WeightNormSquared,
-    };
-    use super::scalar::Recip;
-    use super::{pga2d, pga3d};
-
-    // This is a crude implementation of recip for unit testing--
-    // it is not NaN-safe!
-    // Not recommended for use in production
-    impl Recip for f32 {
-        type Output = f32;
-
-        fn recip(self) -> f32 {
-            let result = self.recip();
-            assert!(result.is_finite());
-            result
-        }
-    }
+    use crate::ops::*;
+    use crate::{pga2d, pga3d};
 
     macro_rules! assert_close {
         ($left:expr, $right:expr $(,)?) => {

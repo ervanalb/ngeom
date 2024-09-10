@@ -1180,10 +1180,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         })
                         .collect();
                     let name = &obj.name;
-                    // TODO can we get rid of the Ring trait bound here?
                     quote! {
-                        #[derive(Clone, Copy)]
-                        pub struct #name <T: Ring> {
+                        pub struct #name<T> {
                             #struct_members
                         }
                     }
@@ -1200,7 +1198,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
         let field = coefficient_ident("a", &basis[basis.len() - 1]);
 
         quote! {
-            impl<T: Ring + Recip<Output: Ring>> AntiRecip for AntiScalar<T> {
+            impl<T: Recip> AntiRecip for AntiScalar<T> {
                 type Output = AntiScalar<<T as Recip>::Output>;
                 fn anti_recip(self) -> Self::Output {
                     AntiScalar {
@@ -1209,7 +1207,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             }
 
-            impl<T: Ring + Sqrt> AntiSqrt for AntiScalar<T> {
+            impl<T: Sqrt> AntiSqrt for AntiScalar<T> {
                 fn anti_sqrt(self) -> AntiScalar<T> {
                     AntiScalar {
                         #field: self.#field.sqrt(),
@@ -1217,7 +1215,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             }
 
-            impl<T: Ring + Trig<Output: Ring>> AntiTrig for AntiScalar<T> {
+            impl<T: Trig> AntiTrig for AntiScalar<T> {
                 type Output = AntiScalar<<T as Trig>::Output>;
 
                 fn anti_cos(self) -> Self::Output {
@@ -1237,21 +1235,21 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             }
 
-            impl<T: Ring + core::cmp::PartialEq> PartialEq for AntiScalar<T> {
+            impl<T: core::cmp::PartialEq> PartialEq for AntiScalar<T> {
                 fn eq(&self, other: &Self) -> bool {
                     self.#field.eq(&other.#field)
                 }
             }
 
-            impl<T: Ring + core::cmp::Eq> Eq for AntiScalar<T> {}
+            impl<T: core::cmp::Eq> Eq for AntiScalar<T> {}
 
-            impl<T: Ring + core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
+            impl<T: core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
                 fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
                     self.#field.partial_cmp(&other.#field)
                 }
             }
 
-            impl<T: Ring + core::cmp::Ord> Ord for AntiScalar<T> {
+            impl<T: core::cmp::Ord> Ord for AntiScalar<T> {
                 fn cmp(&self, other: &Self) -> core::cmp::Ordering {
                     self.#field.cmp(&other.#field)
                 }
@@ -1262,6 +1260,50 @@ fn gen_algebra2(input: Input) -> TokenStream {
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
+            // Derive clone
+            let clone_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let type_name = &obj.type_name();
+                        let output_type_name = &obj.type_name_colons();
+
+                        let cloned_fields: TokenStream = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| {
+                                is_selected.then(|| {
+                                    let identifier = coefficient_ident("a", b);
+                                    quote! {
+                                        #identifier: self.#identifier.clone(),
+                                    }
+                                })
+                            })
+                            .collect();
+                        quote! {
+                            impl <T: core::clone::Clone> core::clone::Clone for #type_name {
+                                fn clone(&self) -> Self {
+                                    #output_type_name {
+                                        #cloned_fields
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            let copy_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let type_name = &obj.type_name();
+                        quote! {
+                            impl <T: core::marker::Copy> core::marker::Copy for #type_name { }
+                        }
+                    }
+                }
+            };
+            
             // Derive debug
             let debug_code = {
                 match obj.is_scalar {
@@ -1291,7 +1333,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         let fmt_expr = format!("{}: {{{{{}}}}}", obj.name, fmt_expr_components);
                         let type_name = &obj.type_name_colons();
                         quote! {
-                            impl <T: Ring + core::fmt::Debug> core::fmt::Debug for #type_name {
+                            impl <T: core::fmt::Debug> core::fmt::Debug for #type_name {
                                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                                     write!(f, #fmt_expr, #fmt_vars)
                                 }
@@ -1333,7 +1375,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                             .collect();
                         let type_name = &obj.type_name_colons();
                         quote! {
-                            impl <T: Ring + core::fmt::Display> core::fmt::Display for #type_name {
+                            impl <T: core::fmt::Display> core::fmt::Display for #type_name {
                                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                                     write!(f, #fmt_expr, #fmt_vars)
                                 }
@@ -2154,6 +2196,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 // #name
                 // ===========================================================================
 
+                #clone_code
+                #copy_code
                 #debug_code
                 #display_code
                 #neg_code
