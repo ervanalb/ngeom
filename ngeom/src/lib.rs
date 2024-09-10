@@ -28,6 +28,14 @@
 pub mod scalar {
     use core::ops::{Add, Mul, Neg, Sub};
 
+    /// A scalar datatype whose absolute value can be taken.
+    pub trait Abs {
+        type Output;
+
+        /// Computes the absolute value of a scalar.
+        fn abs(self) -> Self::Output;
+    }
+
     /// A scalar datatype which is closed under addition and multiplication.
     ///
     /// see <https://en.wikipedia.org/wiki/Ring_(mathematics)>
@@ -40,6 +48,7 @@ pub mod scalar {
         Clone
         + Copy
         + Neg<Output = Self>
+        + Abs<Output = Self>
         + Add<Self, Output = Self>
         + Mul<Self, Output = Self>
         + Sub<Self, Output = Self>
@@ -92,7 +101,7 @@ pub mod scalar {
     /// are on values that are guaranteed by design to be non-negative,
     /// making internal use NaN-free.
     pub trait Sqrt {
-        // This scalar's positive square root. Only valid for non-negative numbers.
+        // This scalar's positive square root
         fn sqrt(self) -> Self;
     }
 
@@ -170,37 +179,74 @@ pub mod scalar {
     ///
     /// If you desire stronger NaN-free enforcement, consider using branded float types.
     ///
-    /// ```ignore
-    /// // TODO this doesn't work yet!
+    /// ```
     /// use ngeom::pga2d::*;
     /// use ngeom::ops::*;
     /// use ngeom::scalar::*;
     ///
-    /// /// f32 wrapper around real numbers that does not implement Recip
-    /// #[derive(Ring, Sqrt)]
+    /// /// f32 wrapper around real numbers
+    /// /// that does not implement `Recip`
+    /// // TODO write derive macro for Ring, Sqrt, etc.
+    /// #[derive(Clone, Copy, PartialEq, PartialOrd)]
     /// struct R32(pub f32);
+    /// impl core::ops::Add<R32> for R32 {
+    ///     type Output = R32;
+    ///     fn add(self, r: R32) -> R32 { R32(self.0 + r.0) }
+    /// }
+    /// impl core::ops::Sub<R32> for R32 {
+    ///     type Output = R32;
+    ///     fn sub(self, r: R32) -> R32 { R32(self.0 - r.0) }
+    /// }
+    /// impl core::ops::Mul<R32> for R32 {
+    ///     type Output = R32;
+    ///     fn mul(self, r: R32) -> R32 { R32(self.0 * r.0) }
+    /// }
+    /// impl core::ops::Neg for R32 {
+    ///     type Output = R32;
+    ///     fn neg(self) -> R32 { R32(-self.0) }
+    /// }
+    /// impl Abs for R32 {
+    ///     type Output = R32;
+    ///     fn abs(self) -> R32 { R32(self.0.abs()) }
+    /// }
+    /// impl Ring for R32 {
+    ///     fn zero() -> R32 { R32(0.) }
+    ///     fn one() -> R32 { R32(1.) }
+    /// }
+    /// impl Sqrt for R32 {
+    ///     fn sqrt(self) -> R32 { R32(self.0.sqrt()) }
+    /// }
+    /// impl From<AntiScalar<R32>> for R32 {
+    ///     fn from(value: AntiScalar<R32>) -> R32 { value.a012 }
+    /// }
     ///
-    /// /// f32 wrapper that doesn't contain a value close to zero
-    /// #[derive(Sqrt<Output=R32>, Recip<Output=R32>)]
+    /// /// f32 wrapper around real numbers that aren't close to zero
+    /// /// allowing for NaN-free `Recip`
     /// struct NonZeroR32(R32);
     /// impl NonZeroR32 {
     ///     pub fn new_checked(value: R32, min: R32) -> Option<NonZeroR32> {
     ///         if value.abs() > min {
-    ///             NonZeroR32(value)
+    ///             Some(NonZeroR32(value))
     ///         } else {
     ///             None
     ///         }
+    ///     }
+    /// }
+    /// impl Recip for NonZeroR32 {
+    ///     type Output = R32;
+    ///     fn recip(self) -> R32 {
+    ///         R32(self.0.0.recip())
     ///     }
     /// }
     ///
     /// /// Return the unitized point of intersection of two unitized lines,
     /// /// or None if they are parallel
     /// fn try_meet(l1: Bivector<R32>, l2: Bivector<R32>) -> Option<Vector<R32>> {
-    ///     const PARALLEL_EPSILON: R32 = 1e-5;
+    ///     const PARALLEL_EPSILON: R32 = R32(1e-5);
     ///
     ///     let result = l1.meet(l2);
     ///     let norm: R32 = result.weight_norm().into();
-    ///     let norm = NonZeroR32.new_checked(norm, PARALLEL_EPSILON)?;
+    ///     let norm = NonZeroR32::new_checked(norm, PARALLEL_EPSILON)?;
     ///     // Forgetting the above check would cause a compile-time error
     ///     // since R32 doesn't implement Recip
     ///     Some(result * norm.recip())
@@ -209,6 +255,11 @@ pub mod scalar {
     pub trait Recip: Sized {
         type Output;
         fn recip(self) -> Self::Output;
+    }
+
+    pub trait AntiAbs {
+        type Output;
+        fn anti_abs(self) -> Self::Output;
     }
 
     pub trait AntiMul<RHS = Self> {
@@ -235,6 +286,13 @@ pub mod scalar {
 
     macro_rules! impl_for_float {
         ($type:ident) => {
+            impl Abs for $type {
+                type Output = $type;
+                fn abs(self) -> $type {
+                    self.abs()
+                }
+            }
+
             impl Ring for $type {
                 fn zero() -> $type {
                     0.
@@ -287,6 +345,13 @@ pub mod scalar {
 
     macro_rules! impl_for_int {
         ($type:ident) => {
+            impl Abs for $type {
+                type Output = $type;
+                fn abs(self) -> $type {
+                    self.abs()
+                }
+            }
+
             impl Ring for $type {
                 fn zero() -> $type {
                     0

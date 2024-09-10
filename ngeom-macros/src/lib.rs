@@ -1198,6 +1198,15 @@ fn gen_algebra2(input: Input) -> TokenStream {
         let field = coefficient_ident("a", &basis[basis.len() - 1]);
 
         quote! {
+            impl<T: Abs> AntiAbs for AntiScalar<T> {
+                type Output = AntiScalar<<T as Abs>::Output>;
+                fn anti_abs(self) -> Self::Output {
+                    AntiScalar {
+                        #field: self.#field.abs(),
+                    }
+                }
+            }
+
             impl<T: Recip> AntiRecip for AntiScalar<T> {
                 type Output = AntiScalar<<T as Recip>::Output>;
                 fn anti_recip(self) -> Self::Output {
