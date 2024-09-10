@@ -99,7 +99,7 @@ pub mod scalar {
     ///
     /// That being said, all uses of `sqrt()` within the library
     /// are on values that are guaranteed by design to be non-negative,
-    /// making internal use NaN-free.
+    /// meaning its use within the library is NaN-free.
     pub trait Sqrt {
         // This scalar's positive square root
         fn sqrt(self) -> Self;
@@ -137,8 +137,6 @@ pub mod scalar {
     }
 
     /// A scalar datatype whose reciprocal can be taken.
-    /// Implementing this trait enables some convenience functions,
-    /// but is generally not safe given the possibility of dividing by zero.
     ///
     /// In homogeneous coordinates, division is rarely needed due to the `w` coordinate,
     /// which in many cases can act as the denominator of an integer coordinate.
@@ -155,8 +153,8 @@ pub mod scalar {
     /// this function must return a valid scalar datatype (e.g. `f32::NaN`) or panic.
     /// There are no other provisions for exception handling at this level.
     ///
-    /// For scalar datatypes that may be zero, this operation is NOT NaN-free,
-    /// including internal to the library.
+    /// For floating point datatypes, this operation is NOT NaN-free,
+    /// including in its use within the library.
     ///
     /// An easy but error-prone solution is to check before calling `recip()`:
     ///
@@ -180,13 +178,14 @@ pub mod scalar {
     /// If you desire stronger NaN-free enforcement, consider using branded float types.
     ///
     /// ```
+    /// use ngeom::{impl_ops_for_scalar, impl_pga2d_for_scalar};
     /// use ngeom::pga2d::*;
     /// use ngeom::ops::*;
     /// use ngeom::scalar::*;
     ///
     /// /// f32 wrapper around real numbers
     /// /// that does not implement `Recip`
-    /// // TODO write derive macro for Ring, Sqrt, etc.
+    /// // TODO write derive macro for Abs, Ring, Sqrt, etc.
     /// #[derive(Clone, Copy, PartialEq, PartialOrd)]
     /// struct R32(pub f32);
     /// impl core::ops::Add<R32> for R32 {
@@ -216,17 +215,16 @@ pub mod scalar {
     /// impl Sqrt for R32 {
     ///     fn sqrt(self) -> R32 { R32(self.0.sqrt()) }
     /// }
-    /// impl From<AntiScalar<R32>> for R32 {
-    ///     fn from(value: AntiScalar<R32>) -> R32 { value.a012 }
-    /// }
+    /// impl_ops_for_scalar!(R32); // TODO replace with derive?
+    /// impl_pga2d_for_scalar!(R32);
     ///
     /// /// f32 wrapper around real numbers that aren't close to zero
     /// /// allowing for NaN-free `Recip`
-    /// struct NonZeroR32(R32);
+    /// struct NonZeroR32(f32);
     /// impl NonZeroR32 {
     ///     pub fn new_checked(value: R32, min: R32) -> Option<NonZeroR32> {
     ///         if value.abs() > min {
-    ///             Some(NonZeroR32(value))
+    ///             Some(NonZeroR32(value.0))
     ///         } else {
     ///             None
     ///         }
@@ -235,7 +233,7 @@ pub mod scalar {
     /// impl Recip for NonZeroR32 {
     ///     type Output = R32;
     ///     fn recip(self) -> R32 {
-    ///         R32(self.0.0.recip())
+    ///         R32(self.0.recip())
     ///     }
     /// }
     ///
@@ -257,25 +255,59 @@ pub mod scalar {
         fn recip(self) -> Self::Output;
     }
 
+    /// The dual of [Abs] for anti-scalars.
+    ///
+    /// e.g. (-𝟜).anti_abs() = 𝟜
+    ///
+    /// This will automatically be implemented for anti-scalars
+    /// when their backing scalar type implements `Abs`.
     pub trait AntiAbs {
         type Output;
         fn anti_abs(self) -> Self::Output;
     }
 
+    /// Anti-scalar multiplication
+    ///
+    /// e.g. 𝟜.anti_mul(𝟚) = 𝟠
+    ///
+    /// Note the distinction between this and scalar multiplication:
+    /// * 𝟜 * 2 = 𝟠
+    /// * 4 * 𝟚 = 𝟠
+    ///
+    /// This will automatically be implemented for anti-scalars
+    /// when their backing scalar type implements `Mul`.
     pub trait AntiMul<RHS = Self> {
         type Output;
         fn anti_mul(self, rhs: RHS) -> Self::Output;
     }
 
+    /// The dual of [Recip] for anti-scalars.
+    ///
+    /// e.g. 𝟚.anti_recip() = ½𝟙
+    ///
+    /// This will automatically be implemented for anti-scalars
+    /// when their backing scalar type implements `Recip`.
     pub trait AntiRecip {
         type Output;
         fn anti_recip(self) -> Self::Output;
     }
 
+    /// The dual of [Sqrt] for anti-scalars.
+    ///
+    /// e.g. 𝟜.anti_sqrt() = 𝟚
+    ///
+    /// This will automatically be implemented for anti-scalars
+    /// when their backing scalar type implements `Sqrt`.
     pub trait AntiSqrt {
         fn anti_sqrt(self) -> Self;
     }
 
+    /// The dual of [Trig] for anti-scalars.
+    ///
+    /// e.g. (⅓ π𝟙).anti_cos() = ½𝟙
+    ///
+    /// This will automatically be implemented for anti-scalars
+    /// when their backing scalar type implements `Trig`.
     pub trait AntiTrig {
         type Output;
 
@@ -371,102 +403,166 @@ pub mod scalar {
 }
 
 /// Low-level geometric algebra operations
+///
+/// There are a few conflicting conventions for geometric algebra notation.
+/// This library tends to use the formulation put forth by
+/// [Dr. Eric Lengyel](https://projectivegeometricalgebra.org/)
 pub mod algebraic_ops {
+    /// The reverse operator Ã
+    ///
+    /// see <https://rigidgeometricalgebra.org/wiki/index.php?title=Reverses>
     pub trait Reverse {
         type Output;
         fn reverse(self) -> Self;
     }
 
+    /// The anti-reverse operator A̰
+    ///
+    /// see <https://rigidgeometricalgebra.org/wiki/index.php?title=Reverses>
     pub trait AntiReverse {
         type Output;
         fn anti_reverse(self) -> Self;
     }
 
+    /// The bulk operator A●
+    ///
+    /// see <https://rigidgeometricalgebra.org/wiki/index.php?title=Bulk_and_weight>
     pub trait Bulk {
         type Output;
         fn bulk(self) -> Self::Output;
     }
 
+    /// The weight operator A○
+    ///
+    /// see <https://rigidgeometricalgebra.org/wiki/index.php?title=Bulk_and_weight>
     pub trait Weight {
         type Output;
         fn weight(self) -> Self::Output;
     }
 
+    /// The bulk dual operator A★
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Duals>
     pub trait BulkDual {
         type Output;
         fn bulk_dual(self) -> Self::Output;
     }
 
+    /// The weight dual operator A☆
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Duals>
     pub trait WeightDual {
         type Output;
         fn weight_dual(self) -> Self::Output;
     }
 
+    /// The right complement operator A̅
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Complements>
     pub trait RightComplement {
         type Output;
         fn right_complement(self) -> Self::Output;
     }
 
+    /// The left complement operator A̲
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Complements>
     pub trait LeftComplement {
         type Output;
         fn left_complement(self) -> Self::Output;
     }
 
+    /// The wedge product from exterior algebra, A ∧ B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Exterior_products>
     pub trait Wedge<T> {
         type Output;
         fn wedge(self, r: T) -> Self::Output;
     }
 
+    /// The anti-wedge product (vee) from exterior algebra, A ∨ B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Exterior_products>
     pub trait AntiWedge<T> {
         type Output;
         fn anti_wedge(self, r: T) -> Self::Output;
     }
 
+    /// The dot product A • B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Dot_products>
     pub trait Dot<T> {
         type Output;
         fn dot(self, r: T) -> Self::Output;
     }
 
+    /// The anti-dot product A ∘ B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Dot_products>
     pub trait AntiDot<T> {
         type Output;
         fn anti_dot(self, r: T) -> Self::Output;
     }
 
+    /// The geometric product A ⟑ B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Geometric_products>
     pub trait WedgeDot<T> {
         type Output;
         fn wedge_dot(self, r: T) -> Self::Output;
     }
 
+    /// The geometric anti-product A ⟇ B
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Geometric_products>
     pub trait AntiWedgeDot<T> {
         type Output;
         fn anti_wedge_dot(self, r: T) -> Self::Output;
     }
 
+    /// The bulk contraction operator A ∨ B★
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Interior_products>
     pub trait BulkContraction<T> {
         type Output;
         fn bulk_contraction(self, r: T) -> Self::Output;
     }
 
+    /// The weight contraction operator A ∨ B☆
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Interior_products>
     pub trait WeightContraction<T> {
         type Output;
         fn weight_contraction(self, r: T) -> Self::Output;
     }
 
+    /// The bulk expansion operator A ∧ B★
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Interior_products>
     pub trait BulkExpansion<T> {
         type Output;
         fn bulk_expansion(self, r: T) -> Self::Output;
     }
 
+    /// The weight expansion operator A ∧ B☆
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Interior_products>
     pub trait WeightExpansion<T> {
         type Output;
         fn weight_expansion(self, r: T) -> Self::Output;
     }
 
+    /// The commutator anti-product ½(A ⟇ B - B ⟇ A)
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Commutators>
     pub trait AntiCommutator<T> {
         type Output;
         fn anti_commutator(self, r: T) -> Self::Output;
     }
 
+    /// The exponential operator e^A under the geometric anti-product ⟇
+    ///
+    /// See <https://rigidgeometricalgebra.org/wiki/index.php?title=Motor#Exponential_Form>
     pub trait ExpAntiWedgeDot {
         type Output;
         fn exp_anti_wedge_dot(self) -> Self::Output;
@@ -475,21 +571,114 @@ pub mod algebraic_ops {
 
 /// Geometric operations
 pub mod ops {
+    /// The square of the bulk norm of an element, ∥A∥●²
+    ///
+    /// See [BulkNorm] for more details.
+    ///
+    /// This trait avoids the square root which is sometimes necessary to calculate [BulkNorm]
+    /// and is therefore always available,
+    /// even on scalar types that do not implement [Sqrt](crate::scalar::Sqrt).
     pub trait BulkNormSquared {
         type Output;
         fn bulk_norm_squared(self) -> Self::Output;
     }
 
+    /// The square of the weight norm of an element, ∥A∥○²
+    ///
+    /// See [WeightNorm] for more details.
+    ///
+    /// This trait avoids the square root which is sometimes necessary to calculate [WeightNorm]
+    /// and is therefore always available,
+    /// even on scalar types that do not implement [Sqrt](crate::scalar::Sqrt).
     pub trait WeightNormSquared {
         type Output;
         fn weight_norm_squared(self) -> Self::Output;
     }
 
+    /// The bulk norm of an element, ∥A∥●
+    ///
+    /// Geometrically, this operation is most useful when applied to ideal elements
+    /// (elements at infinity) whose weight norm is zero.
+    ///
+    /// Here is an example:
+    ///
+    /// ```
+    /// use ngeom::pga2d::*;
+    /// use ngeom::ops::*;
+    /// use ngeom::scalar::*;
+    ///
+    /// // Construct two parallel lines
+    /// let l1 = point([0., 0.])
+    ///     .join(point([10., 0.]))
+    ///     .unitized();
+    /// let l2 = point([0., 10.])
+    ///     .join(point([10., 10.]))
+    ///     .unitized();
+    ///
+    /// // Intersect the two parallel lines to get a point at infinity
+    /// let p = l1.meet(l2);
+    ///
+    /// // The bulk norm of the intersection point is the distance between the lines
+    /// assert_eq!(p.bulk_norm(), 10.);
+    /// ```
+    ///
+    /// Depending on the element, this trait may or may not require taking a square root.
+    /// Consider [BulkNormSquared] if this is an issue.
     pub trait BulkNorm {
         type Output;
         fn bulk_norm(self) -> Self::Output;
     }
 
+    /// The weight norm of an element, ∥A∥○
+    ///
+    /// With homogeneous coordinates, multiplying an element by a non-zero scalar
+    /// results in an element that projects back to the same geometry.
+    /// In other words, `point([2. 3.])` is the same location in space as
+    /// `point([2., 3.]) * 5.` They differ only in weight,
+    /// which can be retrieved by the function `.weight_norm()`:
+    ///
+    /// ```
+    /// use ngeom::pga2d::*;
+    /// use ngeom::ops::*;
+    /// use ngeom::scalar::*;
+    ///
+    /// let p1 = point([2., 3.]);
+    /// let p2 = p1 * 5.;
+    /// assert_eq!(p1.weight_norm(), (1.).into());
+    /// assert_eq!(p2.weight_norm(), (5.).into());
+    /// ```
+    ///
+    /// The weight norm is an anti-scalar since its sign changes under reflection.
+    /// It may be cast into a scalar for the purposes of arithmetic using `.into()`.
+    ///
+    /// //If the weight norm of an element is 𝟙, it is said to be [unitized](Unitized).
+    /// //All non-infinite elements can be unitized without changing the geometry they represent,
+    /// //and many functions expect their inputs to be unitized.
+    ///
+    /// // TODO add distance example
+    ///
+    /// ```
+    /// use ngeom::pga2d::*;
+    /// use ngeom::ops::*;
+    /// use ngeom::scalar::*;
+    ///
+    /// // Construct two parallel lines
+    /// let l1 = point([0., 0.])
+    ///     .join(point([10., 0.]))
+    ///     .unitized();
+    /// let l2 = point([0., 10.])
+    ///     .join(point([20., 10.]))
+    ///     .unitized();
+    ///
+    /// // Intersect the two parallel lines to get a point at infinity
+    /// let p = l1.meet(l2);
+    ///
+    /// // The bulk norm of the intersection point is the distance between the lines
+    /// assert_eq!(p.bulk_norm(), 10.);
+    /// ```
+    ///
+    /// Depending on the element, this trait may or may not require taking a square root.
+    /// Consider [BulkNormSquared] if this is an issue.
     pub trait WeightNorm {
         type Output;
         fn weight_norm(self) -> Self::Output;
@@ -565,7 +754,8 @@ pub mod ops {
         fn motor_to(self, r: T) -> Self::Output;
     }
 
-    macro_rules! impl_for_builtin {
+    #[macro_export]
+    macro_rules! impl_ops_for_scalar {
         ($type:ident) => {
             impl BulkNormSquared for $type {
                 type Output = $type;
@@ -583,13 +773,13 @@ pub mod ops {
         };
     }
 
-    impl_for_builtin!(f32);
-    impl_for_builtin!(f64);
-    impl_for_builtin!(i8);
-    impl_for_builtin!(i16);
-    impl_for_builtin!(i32);
-    impl_for_builtin!(i64);
-    impl_for_builtin!(i128);
+    impl_ops_for_scalar!(f32);
+    impl_ops_for_scalar!(f64);
+    impl_ops_for_scalar!(i8);
+    impl_ops_for_scalar!(i16);
+    impl_ops_for_scalar!(i32);
+    impl_ops_for_scalar!(i64);
+    impl_ops_for_scalar!(i128);
 }
 
 /// Projective geometry for 2D Euclidean space
@@ -607,7 +797,8 @@ pub mod pga2d {
         }
     }
 
-    macro_rules! impl_for_builtin {
+    #[macro_export]
+    macro_rules! impl_pga2d_for_scalar {
         ($type:ident) => {
             impl From<AntiScalar<$type>> for $type {
                 fn from(value: AntiScalar<$type>) -> $type {
@@ -617,13 +808,13 @@ pub mod pga2d {
         };
     }
 
-    impl_for_builtin!(f32);
-    impl_for_builtin!(f64);
-    impl_for_builtin!(i8);
-    impl_for_builtin!(i16);
-    impl_for_builtin!(i32);
-    impl_for_builtin!(i64);
-    impl_for_builtin!(i128);
+    impl_pga2d_for_scalar!(f32);
+    impl_pga2d_for_scalar!(f64);
+    impl_pga2d_for_scalar!(i8);
+    impl_pga2d_for_scalar!(i16);
+    impl_pga2d_for_scalar!(i32);
+    impl_pga2d_for_scalar!(i64);
+    impl_pga2d_for_scalar!(i128);
 
     impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Vector<T> {
         type Output = AntiEven<T>;
@@ -716,7 +907,8 @@ pub mod pga3d {
         }
     }
 
-    macro_rules! impl_for_builtin {
+    #[macro_export]
+    macro_rules! impl_pga3d_for_scalar {
         ($type:ident) => {
             impl From<AntiScalar<$type>> for $type {
                 fn from(value: AntiScalar<$type>) -> $type {
@@ -726,13 +918,13 @@ pub mod pga3d {
         };
     }
 
-    impl_for_builtin!(f32);
-    impl_for_builtin!(f64);
-    impl_for_builtin!(i8);
-    impl_for_builtin!(i16);
-    impl_for_builtin!(i32);
-    impl_for_builtin!(i64);
-    impl_for_builtin!(i128);
+    impl_pga3d_for_scalar!(f32);
+    impl_pga3d_for_scalar!(f64);
+    impl_pga3d_for_scalar!(i8);
+    impl_pga3d_for_scalar!(i16);
+    impl_pga3d_for_scalar!(i32);
+    impl_pga3d_for_scalar!(i64);
+    impl_pga3d_for_scalar!(i128);
 
     impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Bivector<T> {
         type Output = AntiEven<T>;
