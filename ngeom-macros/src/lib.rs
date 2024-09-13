@@ -1244,14 +1244,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             }
 
-            impl<T: core::cmp::PartialEq> PartialEq for AntiScalar<T> {
-                fn eq(&self, other: &Self) -> bool {
-                    self.#field.eq(&other.#field)
-                }
-            }
-
-            impl<T: core::cmp::Eq> Eq for AntiScalar<T> {}
-
             impl<T: core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
                 fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
                     self.#field.partial_cmp(&other.#field)
@@ -1301,6 +1293,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                     }
                 }
             };
+            // Derive copy
             let copy_code = {
                 match obj.is_scalar {
                     true => quote! {}, // Use T for scalar type--don't wrap it in a struct
@@ -1394,8 +1387,55 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 }
             };
 
+            // Derive PartialEq
+            let partial_eq_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let type_name = &obj.type_name();
+
+                        let eq_fields: TokenStream = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| is_selected.then_some(b))
+                            .enumerate()
+                            .map(|(i, b)| {
+                                let and = match i {
+                                    0 => quote! {},
+                                    _ => quote! { && },
+                                };
+                                let identifier = coefficient_ident("a", b);
+                                quote! {
+                                    #and self.#identifier == other.#identifier
+                                }
+                            })
+                            .collect();
+                        quote! {
+                            impl <T: core::cmp::PartialEq> core::cmp::PartialEq for #type_name {
+                                fn eq(&self, other: &Self) -> bool {
+                                    #eq_fields
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Derive Eq
+            let eq_code = {
+                match obj.is_scalar {
+                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    false => {
+                        let type_name = &obj.type_name();
+                        quote! {
+                            impl <T: core::cmp::Eq> core::cmp::Eq for #type_name { }
+                        }
+                    }
+                }
+            };
+
             // Overload unary -
-            let op_trait = quote! { std::ops::Neg };
+            let op_trait = quote! { core::ops::Neg };
             let op_fn = Ident::new("neg", Span::call_site());
             let neg_code = gen_unary_operator(
                 &basis,
@@ -2209,6 +2249,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #copy_code
                 #debug_code
                 #display_code
+                #partial_eq_code
+                #eq_code
                 #neg_code
                 #reverse_code
                 #anti_reverse_code
