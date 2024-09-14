@@ -78,9 +78,25 @@ pub mod scalar {
     /// will not be available.
     ///
     /// `Rational` comes implemented for `f32` and `f64`.
-    pub trait Rational {
-        /// A scalar value that when added to itself, equals [one](Ring::one)
+    pub trait Rational: Ring {
+        /// A scalar value that when multiplied by 2 equals [one](Ring::one)
         fn one_half() -> Self;
+
+        /// A scalar value that when multiplied by 3 equals [one](Ring::one)
+        fn one_third() -> Self;
+
+        /// A scalar value that when multiplied by 4 equals [one](Ring::one)
+        fn one_fourth() -> Self {
+            Self::one_half() * Self::one_half()
+        }
+
+        /// A scalar value that when multiplied by 5 equals [one](Ring::one)
+        fn one_fifth() -> Self;
+
+        /// A scalar value that when multiplied by 6 equals [one](Ring::one)
+        fn one_sixth() -> Self {
+            Self::one_half() * Self::one_third()
+        }
     }
 
     /// A scalar datatype which is closed under the square root function.
@@ -104,7 +120,7 @@ pub mod scalar {
     /// That being said, all uses of `sqrt()` within the library
     /// are on values that are guaranteed by design to be non-negative,
     /// meaning its use within the library is NaN-free.
-    pub trait Sqrt {
+    pub trait Sqrt: Ring {
         // This scalar's positive square root
         fn sqrt(self) -> Self;
     }
@@ -127,7 +143,7 @@ pub mod scalar {
     pub trait Trig {
         // The scalar datatype for linear quantities
         // (output of `sin()` and `cos()`)
-        type Output;
+        type Output: Ring;
 
         // The cosine of a scalar (in radians)
         fn cos(self) -> Self::Output;
@@ -352,7 +368,13 @@ pub mod scalar {
 
             impl Rational for $type {
                 fn one_half() -> $type {
-                    0.5
+                    1. / 2.
+                }
+                fn one_third() -> $type {
+                    1. / 3.
+                }
+                fn one_fifth() -> $type {
+                    1. / 5.
                 }
             }
 
@@ -938,7 +960,7 @@ pub mod ops {
     /// TODO test this
     pub trait Transform<T> {
         type Output;
-        fn transform(self, r: T) -> Self;
+        fn transform(self, r: T) -> Self::Output;
     }
 
     /// Homogeneously scale an element so that its [bulk norm](BulkNorm) is 1.

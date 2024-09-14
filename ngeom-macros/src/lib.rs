@@ -1047,14 +1047,12 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 let output_type_name = &output_object.type_name_colons();
 
                 if !implicit_promotion_to_compound
-                    && (output_object.is_compound
-                        && !(lhs_obj.is_scalar
-                            || rhs_obj.is_scalar
-                            || (lhs_obj.is_compound && rhs_obj.is_compound)))
+                    && output_object.is_compound
+                    && !(lhs_obj.is_compound || rhs_obj.is_compound)
                 {
-                    // Do not create compound objects unintentionally. Only allow:
-                    // 1. Products of compound objects and scalars
-                    // 2. Products of compound objects and other compound objects
+                    // Do not create compound objects unintentionally.
+                    // Only allow returning a compound object
+                    // when taking products of compound objects and other objects
                     return quote! {};
                 }
 
