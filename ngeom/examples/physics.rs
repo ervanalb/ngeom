@@ -6,13 +6,19 @@ use kiss3d::post_processing::post_processing_effect::PostProcessingEffect;
 use kiss3d::renderer::Renderer;
 use kiss3d::window::{State, Window};
 
+use ngeom::ops::*;
+use ngeom::pga2d::*;
+
 struct AppState {
-    arc_ball: ArcBall,
+    arc_ball_camera: ArcBall,
+    cube_pose: AntiEven<f32>,
 }
 
 impl State for AppState {
     fn step(&mut self, window: &mut Window) {
+        self.cube_pose = self.cube_pose.compose(axis_angle(origin(), 0.06_f32));
         draw_axes(window);
+        draw_hypercube(self, window);
     }
 
     fn cameras_and_effect_and_renderer(
@@ -23,7 +29,7 @@ impl State for AppState {
         Option<&mut dyn Renderer>,
         Option<&mut dyn PostProcessingEffect>,
     ) {
-        (Some(&mut self.arc_ball), None, None, None)
+        (Some(&mut self.arc_ball_camera), None, None, None)
     }
 }
 
@@ -45,6 +51,31 @@ fn draw_axes(window: &mut Window) {
     );
 }
 
+fn draw_hypercube(state: &AppState, window: &mut Window) {
+    let points: Vec<Vector<f32>> = vec![
+        point([-0.5, -0.5]),
+        point([-0.5, 0.5]),
+        point([0.5, 0.5]),
+        point([0.5, -0.5]),
+    ];
+
+    let edges: Vec<(usize, usize)> = vec![(0, 1), (1, 2), (2, 3), (3, 0)];
+
+    let points_transformed: Vec<_> = points
+        .iter()
+        .map(|p| p.transform(state.cube_pose))
+        .collect();
+
+    let get_point3 = |i: usize| -> Point3<f32> {
+        let v = points_transformed[i].unitized();
+        Point3::new(v.a1, v.a2, 0.)
+    };
+
+    for (i1, i2) in edges {
+        window.draw_line(&get_point3(i1), &get_point3(i2), &Point3::new(1., 1., 1.));
+    }
+}
+
 fn main() {
     let mut window = Window::new("ngeom N-dimensional Physics Demo");
 
@@ -53,7 +84,10 @@ fn main() {
     let mut arc_ball = ArcBall::new(Point3::new(3., -10., 3.), Point3::origin());
     arc_ball.set_up_axis(Vector3::new(0., 0., 1.));
 
-    let state = AppState { arc_ball };
+    let state = AppState {
+        arc_ball_camera: arc_ball,
+        cube_pose: identity_motor().into(),
+    };
 
     window.render_loop(state)
 }

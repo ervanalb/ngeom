@@ -1101,6 +1101,14 @@ pub mod pga2d {
         }
     }
 
+    /// Motor that performs no translation or rotation
+    ///
+    /// If you need a more generic motor type, such as [AntiEven],
+    /// you can use `.into()` on this result.
+    pub fn identity_motor<T: Ring>() -> AntiScalar<T> {
+        AntiScalar { a012: T::one() }
+    }
+
     /// Rotor about unitized point p by the given angle
     pub fn axis_angle<T: Ring, A: Ring + Rational + Trig<Output = T>>(
         axis: Vector<T>,
@@ -1224,6 +1232,14 @@ pub mod pga3d {
             a013: b,
             a021: c,
         }
+    }
+
+    /// Motor that performs no translation or rotation
+    ///
+    /// If you need a more generic motor type, such as [AntiEven],
+    /// you can use `.into()` on this result.
+    pub fn identity_motor<T: Ring>() -> AntiScalar<T> {
+        AntiScalar { a0123: T::one() }
     }
 
     /// Rotor about unitized line l by the given angle

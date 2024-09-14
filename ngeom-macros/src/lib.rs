@@ -1264,7 +1264,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Derive clone
             let clone_code = {
                 match obj.is_scalar {
-                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    true => quote! {},
                     false => {
                         let type_name = &obj.type_name();
                         let output_type_name = &obj.type_name_colons();
@@ -1309,7 +1309,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Derive debug
             let debug_code = {
                 match obj.is_scalar {
-                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    true => quote! {},
                     false => {
                         let fmt_expr_components: String = basis
                             .iter()
@@ -1348,7 +1348,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Derive display
             let display_code = {
                 match obj.is_scalar {
-                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    true => quote! {},
                     false => {
                         let fmt_expr: String = basis
                             .iter()
@@ -1390,7 +1390,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
             // Derive PartialEq
             let partial_eq_code = {
                 match obj.is_scalar {
-                    true => quote! {}, // Use T for scalar type--don't wrap it in a struct
+                    true => quote! {},
                     false => {
                         let type_name = &obj.type_name();
 
@@ -1432,6 +1432,96 @@ fn gen_algebra2(input: Input) -> TokenStream {
                         }
                     }
                 }
+            };
+
+            // Derive Default
+            let default_code = {
+                match obj.is_scalar {
+                    true => quote! {},
+                    false => {
+                        let type_name = &obj.type_name();
+                        let type_name_colons = &obj.type_name_colons();
+
+                        let default_fields: TokenStream = basis
+                            .iter()
+                            .zip(obj.select_components.iter())
+                            .filter_map(|(b, is_selected)| is_selected.then_some(b))
+                            .map(|b| {
+                                let field = coefficient_ident("a", b);
+                                quote! {
+                                    #field: T::default(),
+                                }
+                            })
+                            .collect();
+                        quote! {
+                            impl <T: core::default::Default> core::default::Default for #type_name {
+                                fn default() -> #type_name {
+                                    #type_name_colons {
+                                        #default_fields
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Derive From / Into
+            let from_code: TokenStream = {
+                if obj.is_scalar {
+                    // Do not implement From on the scalar--
+                    // typically because these would violate rust's orphan rule
+                    // and are also not useful
+                    return quote! {};
+                }
+
+                objects.iter().map(|other_obj| {
+                    // See if the object we are converting from
+                    // contains a non-empty strict subset of the components in our object
+                    let is_subset = obj.select_components.iter().zip(other_obj.select_components.iter()).all(|(&my_c, &other_c)| my_c || !other_c);
+                    if !is_subset { return quote! {}; }
+
+                    let is_same_object = obj.select_components.iter().zip(other_obj.select_components.iter()).all(|(&my_c, &other_c)| my_c == other_c);
+                    if is_same_object { return quote! {}; }
+
+                    let is_not_empty = obj.select_components.iter().zip(other_obj.select_components.iter()).any(|(&my_c, &other_c)| my_c && other_c);
+                    if !is_not_empty { return quote! {}; }
+
+                    let my_type_name = obj.type_name();
+                    let other_type_name = other_obj.type_name();
+                    let my_type_name_colons = obj.type_name_colons();
+                    let output_fields: TokenStream = obj
+                        .select_components
+                        .iter()
+                        .zip(other_obj.select_components.iter())
+                        .zip(basis.iter())
+                        .map(|((&my_selected, &other_selected), b)| {
+                            if !my_selected {
+                                return quote! {};
+                            }
+                            let field = coefficient_ident("a", b);
+                            if other_selected {
+                                if other_obj.is_scalar {
+                                    quote! { #field: value, }
+                                } else {
+                                    quote! { #field: value.#field, }
+                                }
+                            } else {
+                                quote! { #field: T::default(), }
+                            }
+                        })
+                        .collect();
+
+                    quote! {
+                        impl<T: core::default::Default> From<#other_type_name> for #my_type_name {
+                            fn from(value: #other_type_name) -> #my_type_name {
+                                #my_type_name_colons {
+                                    #output_fields
+                                }
+                            }
+                        }
+                    }
+                }).collect()
             };
 
             // Overload unary -
@@ -2251,6 +2341,8 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #display_code
                 #partial_eq_code
                 #eq_code
+                #default_code
+                #from_code
                 #neg_code
                 #reverse_code
                 #anti_reverse_code
