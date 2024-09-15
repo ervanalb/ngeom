@@ -25,6 +25,8 @@ struct PhysicsState {
 }
 
 // TODO add inertia tensor
+// The inverse of the moment of inertia
+// Maps L_B to ω_B
 fn a_inv(l_b: Bivector<f32>) -> Vector<f32> {
     Vector {
         a0: l_b.a12,
@@ -34,10 +36,11 @@ fn a_inv(l_b: Bivector<f32>) -> Vector<f32> {
 }
 
 impl PhysicsState {
-    fn dot(&self) -> PhysicsState {
+    fn d_dt(&self) -> PhysicsState {
+        let w_b = a_inv(self.cube_l_b);
         PhysicsState {
-            cube_g: a_inv(self.cube_l_b).anti_wedge_dot(self.cube_g) * -0.5,
-            cube_l_b: self.cube_l_b.anti_commutator(a_inv(self.cube_l_b)),
+            cube_g: w_b.anti_wedge_dot(self.cube_g) * 0.5,
+            cube_l_b: w_b.anti_commutator(self.cube_l_b),
         }
     }
 }
@@ -64,7 +67,7 @@ impl Mul<f32> for PhysicsState {
 
 impl State for AppState {
     fn step(&mut self, window: &mut Window) {
-        self.physics = rk4(|y: PhysicsState| y.dot(), self.physics, 0.06_f32);
+        self.physics = rk4(|y: PhysicsState| y.d_dt(), self.physics, 0.06_f32);
         draw_axes(window);
         draw_hypercube(self, window);
     }
@@ -151,7 +154,7 @@ fn main() {
         physics: PhysicsState {
             cube_g: identity_motor().into(),
             cube_l_b: Bivector {
-                a20: -0.1,
+                a20: 0.1,
                 a01: 0.1,
                 a12: 1.,
             },
