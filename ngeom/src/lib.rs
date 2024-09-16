@@ -56,9 +56,12 @@ pub mod scalar {
         + Add<Self, Output = Self>
         + Mul<Self, Output = Self>
         + Sub<Self, Output = Self>
+        + Default
     {
         /// The additive identity
-        fn zero() -> Self;
+        fn zero() -> Self {
+            Self::default()
+        }
 
         /// The multiplicative identity
         fn one() -> Self;
@@ -229,7 +232,6 @@ pub mod scalar {
     ///     fn abs(self) -> R32 { R32(self.0.abs()) }
     /// }
     /// impl Ring for R32 {
-    ///     fn zero() -> R32 { R32(0.) }
     ///     fn one() -> R32 { R32(1.) }
     /// }
     /// impl Sqrt for R32 {
@@ -358,9 +360,6 @@ pub mod scalar {
             }
 
             impl Ring for $type {
-                fn zero() -> $type {
-                    0.
-                }
                 fn one() -> $type {
                     1.
                 }
@@ -425,9 +424,6 @@ pub mod scalar {
             }
 
             impl Ring for $type {
-                fn zero() -> $type {
-                    0
-                }
                 fn one() -> $type {
                     1
                 }
@@ -1017,6 +1013,85 @@ pub mod ops {
         fn motor_to(self, r: T) -> Self::Output;
     }
 
+    /// Constructor for a motor that performs no motion
+    pub trait IdentityMotor {
+        /// Construct a motor that performs no motion
+        fn identity_motor() -> Self;
+    }
+
+    /// Constructor for a unitized point at the origin
+    pub trait Origin {
+        /// Construct a [unitized](Unitized) point at the origin
+        fn origin() -> Self;
+    }
+
+    /// Constructor for a normalized vector (ideal point) in the X direction
+    pub trait XHat {
+        /// Construct a [normalized](Normalized) vector (ideal point) in the X direction
+        /// (first spatial dimension)
+        ///
+        /// This can be used to construct points in a dimension-agnostic way
+        /// for spaces that are at least 1-dimensional.
+        /// ```
+        /// use ngeom::ops::*;
+        /// use core::ops::Add;
+        ///
+        /// fn get_point<VECTOR: Copy + Add<VECTOR, Output=VECTOR> + Origin + XHat>() -> VECTOR {
+        ///     VECTOR::origin()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::x_hat()
+        /// }
+        /// ```
+        fn x_hat() -> Self;
+    }
+
+    /// Constructor for a normalized vector (ideal point) in the Y direction
+    pub trait YHat {
+        /// Construct a [normalized](Normalized) vector (ideal point) in the Y direction
+        /// (second spatial dimension)
+        ///
+        /// This can be used to construct points in a dimension-agnostic way
+        /// for spaces that are at least 2-dimensional.
+        /// ```
+        /// use ngeom::ops::*;
+        /// use core::ops::Add;
+        ///
+        /// fn get_point<VECTOR: Copy + Add<VECTOR, Output=VECTOR> + Origin + XHat + YHat>() -> VECTOR {
+        ///     VECTOR::origin()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::y_hat()
+        ///       + VECTOR::y_hat()
+        /// }
+        /// ```
+        fn y_hat() -> Self;
+    }
+
+    /// Constructor for a normalized vector (ideal point) in the Z direction
+    pub trait ZHat {
+        /// Construct a [normalized](Normalized) vector (ideal point) in the Z direction
+        /// (third spatial dimension)
+        ///
+        /// This can be used to construct points in a dimension-agnostic way
+        /// for spaces that are at least 3-dimensional.
+        /// ```
+        /// use ngeom::ops::*;
+        /// use core::ops::Add;
+        ///
+        /// fn get_point<VECTOR: Copy + Add<VECTOR, Output=VECTOR> + Origin + XHat + YHat + ZHat>() -> VECTOR {
+        ///     VECTOR::origin()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::x_hat()
+        ///       + VECTOR::y_hat()
+        ///       + VECTOR::y_hat()
+        ///       + VECTOR::z_hat()
+        /// }
+        /// ```
+        fn z_hat() -> Self;
+    }
+
     #[macro_export]
     macro_rules! impl_ops_for_scalar {
         ($type:ident) => {
@@ -1092,12 +1167,44 @@ pub mod pga2d {
         }
     }
 
-    pub fn origin<T: Ring>() -> Vector<T> {
-        Vector {
-            a0: T::one(),
-            a1: T::zero(),
-            a2: T::zero(),
+    impl<T: Ring> Origin for Vector<T> {
+        fn origin() -> Vector<T> {
+            Vector {
+                a0: T::one(),
+                a1: T::zero(),
+                a2: T::zero(),
+            }
         }
+    }
+
+    impl<T: Ring> XHat for Vector<T> {
+        fn x_hat() -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: T::one(),
+                a2: T::zero(),
+            }
+        }
+    }
+
+    impl<T: Ring> YHat for Vector<T> {
+        fn y_hat() -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: T::zero(),
+                a2: T::one(),
+            }
+        }
+    }
+
+    impl<T: Ring> IdentityMotor for AntiEven<T> {
+        fn identity_motor() -> AntiEven<T> {
+            AntiScalar { a012: T::one() }.into()
+        }
+    }
+
+    pub fn origin<T: Ring>() -> Vector<T> {
+        Vector::origin()
     }
 
     // Construction functions
@@ -1132,14 +1239,6 @@ pub mod pga2d {
             a20: a,
             a01: b,
         }
-    }
-
-    /// Motor that performs no translation or rotation
-    ///
-    /// If you need a more generic motor type, such as [AntiEven],
-    /// you can use `.into()` on this result.
-    pub fn identity_motor<T: Ring>() -> AntiScalar<T> {
-        AntiScalar { a012: T::one() }
     }
 
     /// Rotor about unitized point p by the given angle
@@ -1221,13 +1320,52 @@ pub mod pga3d {
         }
     }
 
-    pub fn origin<T: Ring>() -> Vector<T> {
-        Vector {
-            a0: T::one(),
-            a1: T::zero(),
-            a2: T::zero(),
-            a3: T::zero(),
+    impl<T: Ring> Origin for Vector<T> {
+        fn origin() -> Vector<T> {
+            Vector {
+                a0: T::one(),
+                a1: T::zero(),
+                a2: T::zero(),
+                a3: T::zero(),
+            }
         }
+    }
+
+    impl<T: Ring> XHat for Vector<T> {
+        fn x_hat() -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: T::one(),
+                a2: T::zero(),
+                a3: T::zero(),
+            }
+        }
+    }
+
+    impl<T: Ring> YHat for Vector<T> {
+        fn y_hat() -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: T::zero(),
+                a2: T::one(),
+                a3: T::zero(),
+            }
+        }
+    }
+
+    impl<T: Ring> ZHat for Vector<T> {
+        fn z_hat() -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: T::zero(),
+                a2: T::zero(),
+                a3: T::one(),
+            }
+        }
+    }
+
+    pub fn origin<T: Ring>() -> Vector<T> {
+        Vector::origin()
     }
 
     pub fn point<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
@@ -1267,12 +1405,10 @@ pub mod pga3d {
         }
     }
 
-    /// Motor that performs no translation or rotation
-    ///
-    /// If you need a more generic motor type, such as [AntiEven],
-    /// you can use `.into()` on this result.
-    pub fn identity_motor<T: Ring>() -> AntiScalar<T> {
-        AntiScalar { a0123: T::one() }
+    impl<T: Ring> IdentityMotor for AntiEven<T> {
+        fn identity_motor() -> AntiEven<T> {
+            AntiScalar { a0123: T::one() }.into()
+        }
     }
 
     /// Rotor about unitized line l by the given angle
