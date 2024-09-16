@@ -963,6 +963,17 @@ pub mod ops {
         fn transform(self, r: T) -> Self::Output;
     }
 
+    /// Transform element A by the reverse of motor or flector B
+    ///
+    /// Note that transforming by a flector will result in negated output.
+    /// This is not geometrically meaningful due to homogeneous coordinates,
+    /// but you may wish to add a negative sign when performing reflections.
+    /// TODO test this
+    pub trait ReverseTransform<T> {
+        type Output;
+        fn reverse_transform(self, r: T) -> Self::Output;
+    }
+
     /// Homogeneously scale an element so that its [bulk norm](BulkNorm) is 1.
     ///
     /// Normalization is most useful for ideal elements whose [weight norm](WeightNorm) is 0.

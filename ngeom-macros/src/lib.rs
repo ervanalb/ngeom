@@ -2172,6 +2172,45 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 None, // alias
             );
 
+            // Add a method A.reverse_transform(B) which computes B ⟇ A ⟇ B̰
+            let op_trait = quote! { ReverseTransform };
+            let op_fn = Ident::new("reverse_transform", Span::call_site());
+            let reverse_transform_1 = |i: usize, j: usize| {
+                // Compute first half of B ⟇ A ⟇ B̰
+                // Where i maps to B, and j maps to A.
+                // In part 2, we will compute the geometric antiproduct of this intermediate result
+                // with B̰
+
+                geometric_anti_product_multiplication_table[i][j]
+            };
+            let reverse_transform_2 = |i: usize, j: usize| {
+                // Compute second half of B ⟇ A ⟇ B̰
+                // In part 1, we computed the intermediate result B ⟇ A which maps to i here.
+                // j maps to B.
+
+                let (coef_rev, j) = anti_reverse_f(j);
+                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
+                (coef_rev * coef_prod, ix_result)
+            };
+            let reverse_transform_code = gen_binary_operator(
+                &basis,
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                |a, b| {
+                    generate_symbolic_double_product(
+                        &basis,
+                        a,
+                        b,
+                        reverse_transform_1,
+                        reverse_transform_2,
+                    )
+                },
+                false, // implicit_promotion_to_compound
+                None, // alias
+            );
+
             // Implement A.projection(B) which computes B ∨ (A ∧  B☆)
             let op_trait = quote! { Projection };
             let op_fn = Ident::new("projection", Span::call_site());
@@ -2375,6 +2414,7 @@ fn gen_algebra2(input: Input) -> TokenStream {
                 #central_projection_code
                 #central_anti_projection_code
                 #transform_code
+                #reverse_transform_code
                 #motor_to_code
             }
         })

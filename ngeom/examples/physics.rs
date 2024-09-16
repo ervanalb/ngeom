@@ -24,15 +24,11 @@ struct PhysicsState {
     cube_l_b: Bivector<f32>, // L_B, the cube's angular (& linear) momentum in its local reference
 }
 
-// TODO add inertia tensor
 // The inverse of the moment of inertia
 // Maps L_B to ω_B
 fn a_inv(l_b: Bivector<f32>) -> Vector<f32> {
-    Vector {
-        a0: l_b.a12,
-        a1: l_b.a20,
-        a2: l_b.a01,
-    }
+    // TODO add inertia tensor
+    l_b.left_complement()
 }
 
 impl PhysicsState {
@@ -40,8 +36,46 @@ impl PhysicsState {
         let w_b = a_inv(self.cube_l_b);
         PhysicsState {
             cube_g: w_b.anti_wedge_dot(self.cube_g) * 0.5,
-            cube_l_b: w_b.anti_commutator(self.cube_l_b),
+            cube_l_b: self.gravity_torque()
+                + self.spring_torque()
+                + self.drag_torque()
+                + w_b.anti_commutator(self.cube_l_b),
         }
+    }
+
+    fn gravity_torque(&self) -> Bivector<f32> {
+        let g_s = ideal_point([0., -1.]);
+        let g_b = g_s.reverse_transform(self.cube_g);
+
+        // Apply gravity to the center of mass
+        origin().join(g_b)
+    }
+
+    fn spring_torque(&self) -> Bivector<f32> {
+        let p_b = point([0.5, 0.5]); // Cube attachment point, in body frame
+        let a_s = origin(); // World attachment point, in space frame
+        let k = -2.; // Spring constant
+
+        let a_b = a_s.reverse_transform(self.cube_g);
+        let spring_line = a_b.join(p_b);
+        spring_line * k
+    }
+
+    fn drag_torque(&self) -> Bivector<f32> {
+        let w_b = a_inv(self.cube_l_b);
+
+        //let linear_k = -0.1;
+        //let rotational_k = -0.05;
+
+        let drag = w_b.right_complement();
+
+        // TODO different linear & rotational drag
+        drag * -0.05
+        //Bivector {
+        //    a01: drag.a01 * linear_k,
+        //    a20: drag.a20 * linear_k,
+        //    a12: drag.a12 * rotational_k,
+        //}
     }
 }
 
@@ -65,9 +99,20 @@ impl Mul<f32> for PhysicsState {
     }
 }
 
+impl Unitized for PhysicsState {
+    type Output = PhysicsState;
+    fn unitized(self) -> PhysicsState {
+        PhysicsState {
+            cube_g: self.cube_g.unitized(),
+            cube_l_b: self.cube_l_b,
+        }
+    }
+}
+
 impl State for AppState {
     fn step(&mut self, window: &mut Window) {
         self.physics = rk4(|y: PhysicsState| y.d_dt(), self.physics, 0.06_f32);
+        self.physics = self.physics.unitized();
         draw_axes(window);
         draw_hypercube(self, window);
     }
@@ -136,9 +181,17 @@ fn draw_hypercube(state: &AppState, window: &mut Window) {
         Point3::new(v.a1, v.a2, 0.)
     };
 
+    // Draw cube
     for (i1, i2) in edges {
         window.draw_line(&get_point3(i1), &get_point3(i2), &Point3::new(1., 1., 1.));
     }
+
+    // Draw spring
+    window.draw_line(
+        &Point3::new(0., 0., 0.),
+        &get_point3(2),
+        &Point3::new(1., 1., 1.),
+    );
 }
 
 fn main() {
@@ -154,10 +207,10 @@ fn main() {
         physics: PhysicsState {
             cube_g: identity_motor().into(),
             cube_l_b: Bivector {
-                a20: 0.1,
-                a01: 0.1,
-                a12: 1.,
-            },
+                a20: 1.,
+                a01: 1.,
+                a12: 0.1,
+            } * 1.,
         },
     };
 
