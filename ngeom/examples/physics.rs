@@ -67,10 +67,10 @@ impl Space2d {
     fn new() -> Self {
         Space2d {
             vertices: vec![
-                pga2d::point([-0.5, -0.5]),
-                pga2d::point([-0.5, 0.5]),
-                pga2d::point([0.5, -0.5]),
-                pga2d::point([0.5, 0.5]),
+                pga2d::Vector::point([-0.5, -0.5]),
+                pga2d::Vector::point([-0.5, 0.5]),
+                pga2d::Vector::point([0.5, -0.5]),
+                pga2d::Vector::point([0.5, 0.5]),
             ],
             edges: vec![(0, 1), (1, 3), (3, 2), (2, 0)],
         }
@@ -102,14 +102,14 @@ impl Space3d {
     fn new() -> Self {
         Space3d {
             vertices: vec![
-                pga3d::point([-0.5, -0.5, -0.5]),
-                pga3d::point([-0.5, -0.5, 0.5]),
-                pga3d::point([-0.5, 0.5, -0.5]),
-                pga3d::point([-0.5, 0.5, 0.5]),
-                pga3d::point([0.5, -0.5, -0.5]),
-                pga3d::point([0.5, -0.5, 0.5]),
-                pga3d::point([0.5, 0.5, -0.5]),
-                pga3d::point([0.5, 0.5, 0.5]),
+                pga3d::Vector::point([-0.5, -0.5, -0.5]),
+                pga3d::Vector::point([-0.5, -0.5, 0.5]),
+                pga3d::Vector::point([-0.5, 0.5, -0.5]),
+                pga3d::Vector::point([-0.5, 0.5, 0.5]),
+                pga3d::Vector::point([0.5, -0.5, -0.5]),
+                pga3d::Vector::point([0.5, -0.5, 0.5]),
+                pga3d::Vector::point([0.5, 0.5, -0.5]),
+                pga3d::Vector::point([0.5, 0.5, 0.5]),
             ],
             edges: vec![
                 (0, 1),
@@ -340,7 +340,7 @@ fn main() {
 
     let state = AppState {
         arc_ball_camera: arc_ball,
-        space: Space3d::new(),
+        space: Space2d::new(),
         physics: PhysicsState::new(),
     };
 

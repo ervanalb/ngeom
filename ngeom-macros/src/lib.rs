@@ -24,186 +24,816 @@ impl Parse for Input {
     }
 }
 
+fn bubble_sort_count_swaps(l: &mut [usize]) -> usize {
+    let mut swaps: usize = 0;
+    for i in (0..l.len()).rev() {
+        for j in 0..i {
+            if l[j] > l[j + 1] {
+                (l[j], l[j + 1]) = (l[j + 1], l[j]);
+                swaps += 1
+            }
+        }
+    }
+    swaps
+}
+
+#[derive(Default, Clone)]
+struct SymbolicSumExpr(Vec<SymbolicProdExpr>);
+
+#[derive(PartialEq, Eq, Clone)]
+struct SymbolicProdExpr(isize, Vec<Symbol>);
+
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone)]
+struct Symbol(Ident);
+
+impl ToTokens for Symbol {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Symbol(self_ident) = self;
+        self_ident.to_tokens(tokens);
+    }
+}
+
+impl PartialOrd for SymbolicProdExpr {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SymbolicProdExpr {
+    fn cmp(&self, SymbolicProdExpr(other_coef, other_symbols): &Self) -> Ordering {
+        let SymbolicProdExpr(self_coef, self_symbols) = self;
+        self_symbols
+            .cmp(&other_symbols)
+            .then_with(|| self_coef.cmp(&other_coef))
+    }
+}
+
+impl Mul<SymbolicProdExpr> for SymbolicProdExpr {
+    type Output = SymbolicProdExpr;
+    fn mul(mut self, SymbolicProdExpr(r_coef, mut r_symbols): Self) -> SymbolicProdExpr {
+        let SymbolicProdExpr(l_coef, l_symbols) = &mut self;
+        *l_coef *= r_coef;
+        l_symbols.append(&mut r_symbols);
+        self
+    }
+}
+
+impl SymbolicProdExpr {
+    fn simplify(mut self) -> Self {
+        let SymbolicProdExpr(coef, symbols) = &mut self;
+        // Sort expression
+        if *coef == 0 {
+            symbols.clear();
+        } else {
+            symbols.sort();
+        }
+        self
+    }
+}
+
+impl ToTokens for SymbolicSumExpr {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let SymbolicSumExpr(terms) = self;
+        if terms.len() == 0 {
+            tokens.append_all(quote! { T::zero() });
+        } else {
+            for (count, prod_expr) in terms.iter().enumerate() {
+                let SymbolicProdExpr(coef, prod_terms) = prod_expr;
+                let coef = *coef;
+
+                if coef >= 0 {
+                    if count != 0 {
+                        tokens.append_all(quote! { + });
+                    }
+                } else {
+                    tokens.append_all(quote! { - });
+                }
+                let coef = coef.abs();
+
+                if prod_terms.len() == 0 {
+                    // If there are no symbols in the product, then this is a scalar
+                    if coef == 0 {
+                        tokens.append_all(quote! { T::zero() });
+                    } else if coef == 1 {
+                        tokens.append_all(quote! {
+                            T::one()
+                        });
+                    } else {
+                        panic!("Scalar was not 0, -1 or 1");
+                    }
+                } else {
+                    // There are symbols in the product
+                    if coef == 0 {
+                        tokens.append_all(quote! { T::zero() * });
+                    } else if coef == 1 {
+                        // No token needed if coefficient is unity
+                    } else if coef == 2 {
+                        tokens.append_all(quote! { (T::one() + T::one()) * });
+                    } else {
+                        panic!("No representation for large coefficient {}", coef);
+                    }
+                    for (sym_count, sym) in prod_terms.iter().enumerate() {
+                        if sym_count > 0 {
+                            tokens.append_all(quote! { * });
+                        }
+                        sym.to_tokens(tokens);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl SymbolicSumExpr {
+    fn simplify(self) -> Self {
+        let SymbolicSumExpr(terms) = self;
+
+        // Simplify all products
+        let mut terms: Vec<_> = terms.into_iter().map(|prod| prod.simplify()).collect();
+
+        // Sort expression by symbolic values
+        terms.sort();
+
+        // Combine adjacent terms whose symbolic parts are equal
+        let mut new_expression = vec![];
+        let mut prev_coef = 0;
+        let mut prev_symbols = vec![];
+        for SymbolicProdExpr(coef, symbols) in terms.into_iter() {
+            if prev_symbols == symbols {
+                prev_coef += coef;
+            } else {
+                new_expression.push(SymbolicProdExpr(prev_coef, prev_symbols));
+                prev_coef = coef;
+                prev_symbols = symbols;
+            }
+        }
+        new_expression.push(SymbolicProdExpr(prev_coef, prev_symbols));
+
+        let mut terms = new_expression;
+
+        // Remove all products with coefficient = 0
+        terms.retain(|SymbolicProdExpr(coef, _)| *coef != 0);
+
+        SymbolicSumExpr(terms)
+    }
+}
+
+impl AddAssign<SymbolicProdExpr> for SymbolicSumExpr {
+    fn add_assign(&mut self, r_term: SymbolicProdExpr) {
+        let SymbolicSumExpr(l_terms) = self;
+        l_terms.push(r_term);
+    }
+}
+
+impl AddAssign<SymbolicSumExpr> for SymbolicSumExpr {
+    fn add_assign(&mut self, SymbolicSumExpr(mut r_terms): SymbolicSumExpr) {
+        let SymbolicSumExpr(l_terms) = self;
+        l_terms.append(&mut r_terms);
+    }
+}
+
+impl Mul<SymbolicProdExpr> for SymbolicSumExpr {
+    type Output = SymbolicSumExpr;
+    fn mul(self, r: SymbolicProdExpr) -> SymbolicSumExpr {
+        let SymbolicSumExpr(l) = self;
+        SymbolicSumExpr(l.iter().map(|lp| lp.clone() * r.clone()).collect())
+    }
+}
+
+// Returns the right_complement of a basis element as a pair of
+// (coef, complement_ix) where coef is -1 or 1
+fn right_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+    let complement_ix = right_complement_signs.len() - i - 1;
+    (right_complement_signs[i], complement_ix)
+}
+
+// Returns the inverse of the right complement of a basis element
+// (i.e. the left complement)
+// as a pair of (coef, complement_ix) where coef is -1 or 1
+fn left_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
+    let complement_ix = right_complement_signs.len() - i - 1;
+    (right_complement_signs[complement_ix], complement_ix)
+}
+
+fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
+    let basis_pretty: String = basis.iter().map(|e| format!("{}", e)).collect();
+    Ident::new(&format!("{}{}", var, basis_pretty), Span::call_site())
+}
+
+// We will represent a multivector as an array of coefficients on the basis elements.
+// e.g. in 2D, there are 1 + 3 + 3 + 1 = 8 basis elements,
+// and a full multivector uses all of them: [1, 1, 1, 1, 1, 1, 1, 1]
+// An object such as a Bivector would only use a few of them: [0, 0, 0, 0, 1, 1, 1, 0]
+
+#[derive(PartialEq)]
+struct Object {
+    name: Ident,
+    select_components: Vec<bool>,
+    is_scalar: bool,
+    is_compound: bool,
+}
+
+impl Object {
+    fn type_name(&self) -> TokenStream {
+        if self.is_scalar {
+            quote! { T }
+        } else {
+            let name = &self.name;
+            quote! { #name < T > }
+        }
+    }
+    fn type_name_colons(&self) -> TokenStream {
+        if self.is_scalar {
+            quote! { T }
+        } else {
+            let name = &self.name;
+            quote! { #name :: < T > }
+        }
+    }
+}
+
+fn k_vector_identifier(k: usize, dimension: usize) -> Ident {
+    Ident::new(
+        &if k == dimension {
+            "AntiScalar".to_owned()
+        } else {
+            match k {
+                0 => "Scalar".to_owned(),
+                1 => "Vector".to_owned(),
+                2 => "Bivector".to_owned(),
+                3 => "Trivector".to_owned(),
+                _ => format!("K{}Vector", k),
+            }
+        },
+        Span::call_site(),
+    )
+}
+
+fn rewrite_identifiers<F: Fn(&Ident) -> Option<TokenStream>>(
+    expressions_code: Vec<TokenStream>,
+    replacement: F,
+) -> Vec<TokenStream> {
+    expressions_code
+        .into_iter()
+        .map(|expr| {
+            expr.into_iter()
+                .flat_map(|tt| {
+                    match &tt {
+                        TokenTree::Ident(ident) => {
+                            replacement(ident).unwrap_or(quote! { #ident })
+                        }
+                        other => quote! { #other },
+                    }
+                    .into_iter()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+// Function to generate a simple unary operator on an object,
+// where entries can be rearranged and coefficients can be modified
+// (e.g. for implementing neg, right_complement, reverse)
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+fn generate_symbolic_rearrangement<F: Fn(usize) -> (isize, usize)>(
+    basis: &Vec<Vec<usize>>,
+    select_components: &[bool],
+    op: F,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the sum
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components.len()];
+
+    for (i, &is_selected) in select_components.iter().enumerate() {
+        if is_selected {
+            let (coef, result_basis_ix) = op(i);
+            result[result_basis_ix] +=
+                SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("a", &basis[i]))]);
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+fn generate_symbolic_norm<F: Fn(usize, usize) -> (isize, usize)>(
+    basis: &Vec<Vec<usize>>,
+    select_components: &[bool],
+    product: F,
+    sqrt: bool,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the product
+    let mut expressions: Vec<SymbolicSumExpr> =
+        vec![Default::default(); select_components.len()];
+    for i in select_components
+        .iter()
+        .enumerate()
+        .filter_map(|(i, is_selected)| is_selected.then_some(i))
+    {
+        for j in select_components
+            .iter()
+            .enumerate()
+            .filter_map(|(j, is_selected)| is_selected.then_some(j))
+        {
+            let (coef, ix_result) = product(i, j);
+
+            expressions[ix_result] += SymbolicProdExpr(
+                coef,
+                vec![
+                    Symbol(coefficient_ident("a", &basis[i])),
+                    Symbol(coefficient_ident("a", &basis[j])),
+                ],
+            );
+        }
+    }
+
+    let expressions: Vec<_> = expressions
+        .into_iter()
+        .map(|expr| expr.simplify())
+        .collect();
+
+    if sqrt {
+        // See if we can take the square root symbolically
+        // Otherwise, return an empty expression (which will cause no code to be generated)
+        {
+            let is_scalar = expressions
+                .iter()
+                .enumerate()
+                .all(|(i, expr)| i == 0 || expr.0.len() == 0);
+            let is_anti_scalar = expressions
+                .iter()
+                .enumerate()
+                .all(|(i, expr)| i == expressions.len() - 1 || expr.0.len() == 0);
+            let expression = if is_scalar {
+                Some(expressions[0].clone())
+            } else if is_anti_scalar {
+                Some(expressions[expressions.len() - 1].clone())
+            } else {
+                None
+            };
+            if let Some(expression) = expression {
+                let SymbolicSumExpr(terms) = &expression;
+                if terms.len() == 1 {
+                    let SymbolicProdExpr(coef, terms) = &terms[0];
+                    if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
+                        let sqrt_expression =
+                            SymbolicSumExpr(vec![SymbolicProdExpr(1, vec![terms[0].clone()])]);
+                        let target_ix = if is_scalar {
+                            0
+                        } else if is_anti_scalar {
+                            expressions.len() - 1
+                        } else {
+                            panic!("Took sqrt of something that wasn't a scalar or antiscalar");
+                        };
+                        Some(
+                            (0..select_components.len())
+                                .map(|i| {
+                                    if i == target_ix {
+                                        sqrt_expression.clone()
+                                    } else {
+                                        Default::default()
+                                    }
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None // Expression is not a square
+                    }
+                } else {
+                    None // Multiple terms in the sum
+                }
+            } else {
+                None // Squared norm is not a scalar or antiscalar
+            }
+        }
+        .unwrap_or(vec![Default::default(); select_components.len()])
+    } else {
+        // Return the squared norm
+        expressions
+    }
+}
+
+fn gen_unary_operator(
+    basis: &Vec<Vec<usize>>,
+    objects: &[Object],
+    op_trait: TokenStream,
+    op_fn: Ident,
+    obj: &Object,
+    expressions: &[SymbolicSumExpr],
+    alias: Option<(TokenStream, Ident)>,
+) -> TokenStream {
+    if obj.is_scalar {
+        // Do not generate operations with the scalar being the LHS--
+        // typically because these would violate rust's orphan rule
+        // or result in conflicting trait implementations
+        return quote! {};
+    }
+
+    // Figure out what the type of the output is
+    let select_output_components: Vec<_> = expressions
+        .iter()
+        .map(|SymbolicSumExpr(e)| e.len() != 0)
+        .collect();
+    let output_object = objects.iter().find(|o| {
+        o.select_components
+            .iter()
+            .zip(select_output_components.iter())
+            .find(|&(obj_c, &out_c)| out_c && !obj_c)
+            .is_none()
+    });
+
+    let Some(output_object) = output_object else {
+        // No output object matches the result we got,
+        // so don't generate any code
+        return quote! {};
+    };
+
+    if output_object.is_scalar && expressions[0].0.len() == 0 {
+        // This operation unconditionally returns 0,
+        // so invoking it is probably a type error--
+        // do not generate code for it
+        return quote! {};
+    }
+
+    let output_type_name = &output_object.type_name_colons();
+    let type_name = &obj.type_name();
+
+    // Convert the expression to token trees
+    let expressions: Vec<TokenStream> = expressions
+        .into_iter()
+        .map(|expr| quote! { #expr })
+        .collect();
+
+    // Find and replace temporary a### & b### identifier with self.a### & r.a###
+    let expressions = rewrite_identifiers(expressions, |ident| {
+        basis.iter().find_map(move |b| {
+            if ident == &coefficient_ident("a", b) {
+                Some(if obj.is_scalar {
+                    assert!(b.len() == 0);
+                    quote! { self }
+                } else {
+                    // All fields are in the format "a###"
+                    // so we can re-use the temporary identifier
+                    let new_ident = ident;
+                    quote! { self.#new_ident }
+                })
+            } else {
+                None
+            }
+        })
+    });
+
+    let return_expr = if output_object.is_scalar {
+        let expr = &expressions[0];
+        quote! { #expr }
+    } else {
+        let output_fields: TokenStream = output_object
+            .select_components
+            .iter()
+            .zip(basis.iter().zip(expressions.iter()))
+            .enumerate()
+            .map(|(_i, (is_selected, (b, expr)))| {
+                if !is_selected {
+                    return quote! {};
+                }
+                let field = coefficient_ident("a", b);
+                quote! { #field: #expr, }
+            })
+            .collect();
+        quote! {
+            #output_type_name {
+                #output_fields
+            }
+        }
+    };
+
+    let associated_output_type = quote! { type Output = #output_type_name; };
+
+    let code = quote! {
+        impl < T: Ring > #op_trait for #type_name {
+            #associated_output_type
+
+            fn #op_fn (self) -> #output_type_name {
+                #return_expr
+            }
+        }
+    };
+
+    let alias_code = if let Some((alias_trait, alias_fn)) = alias {
+        quote! {
+            impl < T: Ring > #alias_trait for #type_name {
+                #associated_output_type
+
+                fn #alias_fn (self) -> #output_type_name {
+                    self.#op_fn()
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        #code
+        #alias_code
+    }
+}
+
+// Function to generate a sum of two objects, e.g. for overloading + or -
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+fn generate_symbolic_sum(
+    basis: &Vec<Vec<usize>>,
+    select_components_a: &[bool],
+    select_components_b: &[bool],
+    coef_a: isize,
+    coef_b: isize,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the sum
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+
+    for (i, (&a_is_selected, &b_is_selected)) in select_components_a
+        .iter()
+        .zip(select_components_b.iter())
+        .enumerate()
+    {
+        if a_is_selected {
+            result[i] +=
+                SymbolicProdExpr(coef_a, vec![Symbol(coefficient_ident("a", &basis[i]))]);
+        }
+        if b_is_selected {
+            result[i] +=
+                SymbolicProdExpr(coef_b, vec![Symbol(coefficient_ident("b", &basis[i]))]);
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+// Function to generate a product of two objects, e.g. geometric product, wedge product, etc.
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+fn generate_symbolic_product<F: Fn(usize, usize) -> (isize, usize)>(
+    basis: &Vec<Vec<usize>>,
+    select_components_a: &[bool],
+    select_components_b: &[bool],
+    product: F,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the product
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+    for i in select_components_a
+        .iter()
+        .enumerate()
+        .filter_map(|(i, is_selected)| is_selected.then_some(i))
+    {
+        for j in select_components_b
+            .iter()
+            .enumerate()
+            .filter_map(|(j, is_selected)| is_selected.then_some(j))
+        {
+            let (coef, result_basis_ix) = product(i, j);
+
+            result[result_basis_ix] += SymbolicProdExpr(
+                coef,
+                vec![
+                    Symbol(coefficient_ident("a", &basis[i])),
+                    Symbol(coefficient_ident("b", &basis[j])),
+                ],
+            );
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+// Function to generate a double product of two objects, e.g. sandwich product, project,
+// etc.
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+// The resulting code will implement the product in the following order:
+// (B PRODUCT1 A) PRODUCT2 B
+fn generate_symbolic_double_product<
+    F1: Fn(usize, usize) -> (isize, usize),
+    F2: Fn(usize, usize) -> (isize, usize),
+>(
+    basis: &Vec<Vec<usize>>,
+    select_components_a: &[bool],
+    select_components_b: &[bool],
+    product_1: F1,
+    product_2: F2,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the first intermediate product B PRODUCT1 A
+    // where i maps to components of B, and j maps to components of A
+    let mut intermediate_result: Vec<SymbolicSumExpr> =
+        vec![Default::default(); select_components_a.len()];
+    for i in select_components_b
+        .iter()
+        .enumerate()
+        .filter_map(|(i, is_selected)| is_selected.then_some(i))
+    {
+        for j in select_components_a
+            .iter()
+            .enumerate()
+            .filter_map(|(j, is_selected)| is_selected.then_some(j))
+        {
+            let (coef, result_basis_ix) = product_1(i, j);
+            intermediate_result[result_basis_ix] += SymbolicProdExpr(
+                coef,
+                vec![
+                    Symbol(coefficient_ident("b", &basis[i])),
+                    Symbol(coefficient_ident("a", &basis[j])),
+                ],
+            );
+        }
+    }
+    let intermediate_result: Vec<_> = intermediate_result
+        .into_iter()
+        .map(|expr| expr.simplify())
+        .collect();
+
+    // Generate the final product (B PRODUCT1 A) PRODUCT2 B
+    // where i maps to components of the intermediate result B PRODUCT1 A
+    // and j maps to components of B.
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+    for (i, intermediate_term) in intermediate_result.iter().enumerate() {
+        for j in select_components_b
+            .iter()
+            .enumerate()
+            .filter_map(|(j, is_selected)| is_selected.then_some(j))
+        {
+            let (coef, result_basis_ix) = product_2(i, j);
+            let new_term =
+                SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("b", &basis[j]))]);
+            let result_term = intermediate_term.clone() * new_term;
+            result[result_basis_ix] += result_term;
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
+    basis: &Vec<Vec<usize>>,
+    objects: &[Object],
+    op_trait: TokenStream,
+    op_fn: Ident,
+    lhs_obj: &Object,
+    op: F,
+    implicit_promotion_to_compound: bool,
+    alias: Option<(TokenStream, Ident)>,
+) -> TokenStream {
+    objects
+        .iter()
+        .map(|rhs_obj| {
+            if lhs_obj.is_scalar {
+                // Do not generate operations with the scalar being the LHS--
+                // these violate rust's orphan rule
+                // or result in conflicting trait implementations.
+                // Technically we could allow this for custom ops such as T::cross(r: Vector<T>)
+                // but we won't for the sake of consistency.
+                // Use Vector<T>::cross(r: T) instead.
+                return quote! {};
+            }
+
+            let expressions = op(&lhs_obj.select_components, &rhs_obj.select_components);
+
+            let select_output_components: Vec<_> = expressions
+                .iter()
+                .map(|SymbolicSumExpr(e)| e.len() != 0)
+                .collect();
+            let output_object = objects.iter().find(|o| {
+                o.select_components
+                    .iter()
+                    .zip(select_output_components.iter())
+                    .find(|&(obj_c, &out_c)| out_c && !obj_c)
+                    .is_none()
+            });
+
+            let Some(output_object) = output_object else {
+                // No output object matches the result we got,
+                // so don't generate any code
+                return quote! {};
+            };
+
+            let rhs_type_name = &rhs_obj.type_name();
+            let lhs_type_name = &lhs_obj.type_name();
+            let output_type_name = &output_object.type_name_colons();
+
+            if !implicit_promotion_to_compound
+                && output_object.is_compound
+                && !(lhs_obj.is_compound || rhs_obj.is_compound)
+            {
+                // Do not create compound objects unintentionally.
+                // Only allow returning a compound object
+                // when taking products of compound objects and other objects
+                return quote! {};
+            }
+
+            if output_object.is_scalar && expressions[0].0.len() == 0 {
+                // This operation unconditionally returns 0,
+                // so invoking it is probably a type error--
+                // do not generate code for it.
+
+                return quote! {};
+            }
+
+            // Convert the expression to token trees
+            let expressions: Vec<TokenStream> = expressions
+                .into_iter()
+                .map(|expr| quote! { #expr })
+                .collect();
+
+            // Find and replace temporary a### & b### identifier with self.a### & r.a###
+            let expressions = rewrite_identifiers(expressions, |ident| {
+                basis.iter().find_map(move |b| {
+                    if ident == &coefficient_ident("a", b) {
+                        Some(if lhs_obj.is_scalar {
+                            assert!(b.len() == 0);
+                            quote! { self }
+                        } else {
+                            // All fields are in the format "a###"
+                            // so we can re-use the temporary identifier
+                            let new_ident = ident;
+                            quote! { self.#new_ident }
+                        })
+                    } else if ident == &coefficient_ident("b", b) {
+                        Some(if rhs_obj.is_scalar {
+                            assert!(b.len() == 0);
+                            quote! { r }
+                        } else {
+                            // All fields are in the format "a###"
+                            // so we need to convert b### to a###
+                            let new_ident = coefficient_ident("a", b);
+                            quote! { r.#new_ident }
+                        })
+                    } else {
+                        None
+                    }
+                })
+            });
+
+            let return_expr = if output_object.is_scalar {
+                let expr = &expressions[0];
+                quote! { #expr }
+            } else {
+                let output_fields: TokenStream = output_object
+                    .select_components
+                    .iter()
+                    .zip(basis.iter().zip(expressions.iter()))
+                    .enumerate()
+                    .map(|(_i, (is_selected, (b, expr)))| {
+                        if !is_selected {
+                            return quote! {};
+                        }
+                        let field = coefficient_ident("a", b);
+                        quote! { #field: #expr, }
+                    })
+                    .collect();
+                quote! {
+                    #output_type_name {
+                        #output_fields
+                    }
+                }
+            };
+
+            let associated_output_type = quote! { type Output = #output_type_name; };
+
+            let code = quote! {
+                impl < T: Ring > #op_trait < #rhs_type_name >  for #lhs_type_name {
+                    #associated_output_type
+
+                    fn #op_fn (self, r: #rhs_type_name) -> #output_type_name {
+                        #return_expr
+                    }
+                }
+            };
+
+            let alias_code = if let Some((alias_trait, alias_fn)) = &alias {
+                quote! {
+                    impl < T: Ring > #alias_trait < #rhs_type_name > for #lhs_type_name {
+                        #associated_output_type
+
+                        fn #alias_fn (self, r: #rhs_type_name) -> #output_type_name {
+                            self.#op_fn(r)
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
+
+            quote! {
+                #code
+                #alias_code
+            }
+        })
+        .collect()
+}
+
+
 fn gen_algebra2(input: Input) -> TokenStream {
     let Input {
         basis_vector_squares,
     } = input;
-
-    fn bubble_sort_count_swaps(l: &mut [usize]) -> usize {
-        let mut swaps: usize = 0;
-        for i in (0..l.len()).rev() {
-            for j in 0..i {
-                if l[j] > l[j + 1] {
-                    (l[j], l[j + 1]) = (l[j + 1], l[j]);
-                    swaps += 1
-                }
-            }
-        }
-        swaps
-    }
-
-    #[derive(Default, Clone)]
-    struct SymbolicSumExpr(Vec<SymbolicProdExpr>);
-
-    #[derive(PartialEq, Eq, Clone)]
-    struct SymbolicProdExpr(isize, Vec<Symbol>);
-
-    #[derive(PartialOrd, Ord, PartialEq, Eq, Clone)]
-    struct Symbol(Ident);
-
-    impl ToTokens for Symbol {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let Symbol(self_ident) = self;
-            self_ident.to_tokens(tokens);
-        }
-    }
-
-    impl PartialOrd for SymbolicProdExpr {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    impl Ord for SymbolicProdExpr {
-        fn cmp(&self, SymbolicProdExpr(other_coef, other_symbols): &Self) -> Ordering {
-            let SymbolicProdExpr(self_coef, self_symbols) = self;
-            self_symbols
-                .cmp(&other_symbols)
-                .then_with(|| self_coef.cmp(&other_coef))
-        }
-    }
-
-    impl Mul<SymbolicProdExpr> for SymbolicProdExpr {
-        type Output = SymbolicProdExpr;
-        fn mul(mut self, SymbolicProdExpr(r_coef, mut r_symbols): Self) -> SymbolicProdExpr {
-            let SymbolicProdExpr(l_coef, l_symbols) = &mut self;
-            *l_coef *= r_coef;
-            l_symbols.append(&mut r_symbols);
-            self
-        }
-    }
-
-    impl SymbolicProdExpr {
-        fn simplify(mut self) -> Self {
-            let SymbolicProdExpr(coef, symbols) = &mut self;
-            // Sort expression
-            if *coef == 0 {
-                symbols.clear();
-            } else {
-                symbols.sort();
-            }
-            self
-        }
-    }
-
-    impl ToTokens for SymbolicSumExpr {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            let SymbolicSumExpr(terms) = self;
-            if terms.len() == 0 {
-                tokens.append_all(quote! { T::zero() });
-            } else {
-                for (count, prod_expr) in terms.iter().enumerate() {
-                    let SymbolicProdExpr(coef, prod_terms) = prod_expr;
-                    let coef = *coef;
-
-                    if coef >= 0 {
-                        if count != 0 {
-                            tokens.append_all(quote! { + });
-                        }
-                    } else {
-                        tokens.append_all(quote! { - });
-                    }
-                    let coef = coef.abs();
-
-                    if prod_terms.len() == 0 {
-                        // If there are no symbols in the product, then this is a scalar
-                        if coef == 0 {
-                            tokens.append_all(quote! { T::zero() });
-                        } else if coef == 1 {
-                            tokens.append_all(quote! {
-                                T::one()
-                            });
-                        } else {
-                            panic!("Scalar was not 0, -1 or 1");
-                        }
-                    } else {
-                        // There are symbols in the product
-                        if coef == 0 {
-                            tokens.append_all(quote! { T::zero() * });
-                        } else if coef == 1 {
-                            // No token needed if coefficient is unity
-                        } else if coef == 2 {
-                            tokens.append_all(quote! { (T::one() + T::one()) * });
-                        } else {
-                            panic!("No representation for large coefficient {}", coef);
-                        }
-                        for (sym_count, sym) in prod_terms.iter().enumerate() {
-                            if sym_count > 0 {
-                                tokens.append_all(quote! { * });
-                            }
-                            sym.to_tokens(tokens);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    impl SymbolicSumExpr {
-        fn simplify(self) -> Self {
-            let SymbolicSumExpr(terms) = self;
-
-            // Simplify all products
-            let mut terms: Vec<_> = terms.into_iter().map(|prod| prod.simplify()).collect();
-
-            // Sort expression by symbolic values
-            terms.sort();
-
-            // Combine adjacent terms whose symbolic parts are equal
-            let mut new_expression = vec![];
-            let mut prev_coef = 0;
-            let mut prev_symbols = vec![];
-            for SymbolicProdExpr(coef, symbols) in terms.into_iter() {
-                if prev_symbols == symbols {
-                    prev_coef += coef;
-                } else {
-                    new_expression.push(SymbolicProdExpr(prev_coef, prev_symbols));
-                    prev_coef = coef;
-                    prev_symbols = symbols;
-                }
-            }
-            new_expression.push(SymbolicProdExpr(prev_coef, prev_symbols));
-
-            let mut terms = new_expression;
-
-            // Remove all products with coefficient = 0
-            terms.retain(|SymbolicProdExpr(coef, _)| *coef != 0);
-
-            SymbolicSumExpr(terms)
-        }
-    }
-
-    impl AddAssign<SymbolicProdExpr> for SymbolicSumExpr {
-        fn add_assign(&mut self, r_term: SymbolicProdExpr) {
-            let SymbolicSumExpr(l_terms) = self;
-            l_terms.push(r_term);
-        }
-    }
-
-    impl AddAssign<SymbolicSumExpr> for SymbolicSumExpr {
-        fn add_assign(&mut self, SymbolicSumExpr(mut r_terms): SymbolicSumExpr) {
-            let SymbolicSumExpr(l_terms) = self;
-            l_terms.append(&mut r_terms);
-        }
-    }
-
-    impl Mul<SymbolicProdExpr> for SymbolicSumExpr {
-        type Output = SymbolicSumExpr;
-        fn mul(self, r: SymbolicProdExpr) -> SymbolicSumExpr {
-            let SymbolicSumExpr(l) = self;
-            SymbolicSumExpr(l.iter().map(|lp| lp.clone() * r.clone()).collect())
-        }
-    }
 
     // Generate list of objects in the algebra
 
@@ -309,75 +939,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
         })
         .collect();
 
-    // Returns the right_complement of a basis element as a pair of
-    // (coef, complement_ix) where coef is -1 or 1
-    fn right_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
-        let complement_ix = right_complement_signs.len() - i - 1;
-        (right_complement_signs[i], complement_ix)
-    }
-
-    // Returns the inverse of the right complement of a basis element
-    // (i.e. the left complement)
-    // as a pair of (coef, complement_ix) where coef is -1 or 1
-    fn left_complement(right_complement_signs: &Vec<isize>, i: usize) -> (isize, usize) {
-        let complement_ix = right_complement_signs.len() - i - 1;
-        (right_complement_signs[complement_ix], complement_ix)
-    }
-
-    fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
-        let basis_pretty: String = basis.iter().map(|e| format!("{}", e)).collect();
-        Ident::new(&format!("{}{}", var, basis_pretty), Span::call_site())
-    }
-
-    // We will represent a multivector as an array of coefficients on the basis elements.
-    // e.g. in 2D, there are 1 + 3 + 3 + 1 = 8 basis elements,
-    // and a full multivector uses all of them: [1, 1, 1, 1, 1, 1, 1, 1]
-    // An object such as a Bivector would only use a few of them: [0, 0, 0, 0, 1, 1, 1, 0]
-
-    #[derive(PartialEq)]
-    struct Object {
-        name: Ident,
-        select_components: Vec<bool>,
-        is_scalar: bool,
-        is_compound: bool,
-    }
-
-    impl Object {
-        fn type_name(&self) -> TokenStream {
-            if self.is_scalar {
-                quote! { T }
-            } else {
-                let name = &self.name;
-                quote! { #name < T > }
-            }
-        }
-        fn type_name_colons(&self) -> TokenStream {
-            if self.is_scalar {
-                quote! { T }
-            } else {
-                let name = &self.name;
-                quote! { #name :: < T > }
-            }
-        }
-    }
-
-    fn k_vector_identifier(k: usize, dimension: usize) -> Ident {
-        Ident::new(
-            &if k == dimension {
-                "AntiScalar".to_owned()
-            } else {
-                match k {
-                    0 => "Scalar".to_owned(),
-                    1 => "Vector".to_owned(),
-                    2 => "Bivector".to_owned(),
-                    3 => "Trivector".to_owned(),
-                    _ => format!("K{}Vector", k),
-                }
-            },
-            Span::call_site(),
-        )
-    }
-
     let mut objects: Vec<Object> = Vec::new();
 
     // Add k-vectors to object set
@@ -427,275 +988,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
             is_scalar: false,
             is_compound: true,
         });
-    }
-
-    fn rewrite_identifiers<F: Fn(&Ident) -> Option<TokenStream>>(
-        expressions_code: Vec<TokenStream>,
-        replacement: F,
-    ) -> Vec<TokenStream> {
-        expressions_code
-            .into_iter()
-            .map(|expr| {
-                expr.into_iter()
-                    .flat_map(|tt| {
-                        match &tt {
-                            TokenTree::Ident(ident) => {
-                                replacement(ident).unwrap_or(quote! { #ident })
-                            }
-                            other => quote! { #other },
-                        }
-                        .into_iter()
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-
-    // Function to generate a simple unary operator on an object,
-    // where entries can be rearranged and coefficients can be modified
-    // (e.g. for implementing neg, right_complement, reverse)
-    // The result will be a list of symbolic expressions,
-    // one for each coefficient value in the resultant multivector.
-    fn generate_symbolic_rearrangement<F: Fn(usize) -> (isize, usize)>(
-        basis: &Vec<Vec<usize>>,
-        select_components: &[bool],
-        op: F,
-    ) -> Vec<SymbolicSumExpr> {
-        // Generate the sum
-        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components.len()];
-
-        for (i, &is_selected) in select_components.iter().enumerate() {
-            if is_selected {
-                let (coef, result_basis_ix) = op(i);
-                result[result_basis_ix] +=
-                    SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("a", &basis[i]))]);
-            }
-        }
-
-        result.into_iter().map(|expr| expr.simplify()).collect()
-    }
-
-    fn generate_symbolic_norm<F: Fn(usize, usize) -> (isize, usize)>(
-        basis: &Vec<Vec<usize>>,
-        select_components: &[bool],
-        product: F,
-        sqrt: bool,
-    ) -> Vec<SymbolicSumExpr> {
-        // Generate the product
-        let mut expressions: Vec<SymbolicSumExpr> =
-            vec![Default::default(); select_components.len()];
-        for i in select_components
-            .iter()
-            .enumerate()
-            .filter_map(|(i, is_selected)| is_selected.then_some(i))
-        {
-            for j in select_components
-                .iter()
-                .enumerate()
-                .filter_map(|(j, is_selected)| is_selected.then_some(j))
-            {
-                let (coef, ix_result) = product(i, j);
-
-                expressions[ix_result] += SymbolicProdExpr(
-                    coef,
-                    vec![
-                        Symbol(coefficient_ident("a", &basis[i])),
-                        Symbol(coefficient_ident("a", &basis[j])),
-                    ],
-                );
-            }
-        }
-
-        let expressions: Vec<_> = expressions
-            .into_iter()
-            .map(|expr| expr.simplify())
-            .collect();
-
-        if sqrt {
-            // See if we can take the square root symbolically
-            // Otherwise, return an empty expression (which will cause no code to be generated)
-            {
-                let is_scalar = expressions
-                    .iter()
-                    .enumerate()
-                    .all(|(i, expr)| i == 0 || expr.0.len() == 0);
-                let is_anti_scalar = expressions
-                    .iter()
-                    .enumerate()
-                    .all(|(i, expr)| i == expressions.len() - 1 || expr.0.len() == 0);
-                let expression = if is_scalar {
-                    Some(expressions[0].clone())
-                } else if is_anti_scalar {
-                    Some(expressions[expressions.len() - 1].clone())
-                } else {
-                    None
-                };
-                if let Some(expression) = expression {
-                    let SymbolicSumExpr(terms) = &expression;
-                    if terms.len() == 1 {
-                        let SymbolicProdExpr(coef, terms) = &terms[0];
-                        if *coef == 1 && terms.len() == 2 && terms[0] == terms[1] {
-                            let sqrt_expression =
-                                SymbolicSumExpr(vec![SymbolicProdExpr(1, vec![terms[0].clone()])]);
-                            let target_ix = if is_scalar {
-                                0
-                            } else if is_anti_scalar {
-                                expressions.len() - 1
-                            } else {
-                                panic!("Took sqrt of something that wasn't a scalar or antiscalar");
-                            };
-                            Some(
-                                (0..select_components.len())
-                                    .map(|i| {
-                                        if i == target_ix {
-                                            sqrt_expression.clone()
-                                        } else {
-                                            Default::default()
-                                        }
-                                    })
-                                    .collect(),
-                            )
-                        } else {
-                            None // Expression is not a square
-                        }
-                    } else {
-                        None // Multiple terms in the sum
-                    }
-                } else {
-                    None // Squared norm is not a scalar or antiscalar
-                }
-            }
-            .unwrap_or(vec![Default::default(); select_components.len()])
-        } else {
-            // Return the squared norm
-            expressions
-        }
-    }
-
-    fn gen_unary_operator(
-        basis: &Vec<Vec<usize>>,
-        objects: &[Object],
-        op_trait: TokenStream,
-        op_fn: Ident,
-        obj: &Object,
-        expressions: &[SymbolicSumExpr],
-        alias: Option<(TokenStream, Ident)>,
-    ) -> TokenStream {
-        if obj.is_scalar {
-            // Do not generate operations with the scalar being the LHS--
-            // typically because these would violate rust's orphan rule
-            // or result in conflicting trait implementations
-            return quote! {};
-        }
-
-        // Figure out what the type of the output is
-        let select_output_components: Vec<_> = expressions
-            .iter()
-            .map(|SymbolicSumExpr(e)| e.len() != 0)
-            .collect();
-        let output_object = objects.iter().find(|o| {
-            o.select_components
-                .iter()
-                .zip(select_output_components.iter())
-                .find(|&(obj_c, &out_c)| out_c && !obj_c)
-                .is_none()
-        });
-
-        let Some(output_object) = output_object else {
-            // No output object matches the result we got,
-            // so don't generate any code
-            return quote! {};
-        };
-
-        if output_object.is_scalar && expressions[0].0.len() == 0 {
-            // This operation unconditionally returns 0,
-            // so invoking it is probably a type error--
-            // do not generate code for it
-            return quote! {};
-        }
-
-        let output_type_name = &output_object.type_name_colons();
-        let type_name = &obj.type_name();
-
-        // Convert the expression to token trees
-        let expressions: Vec<TokenStream> = expressions
-            .into_iter()
-            .map(|expr| quote! { #expr })
-            .collect();
-
-        // Find and replace temporary a### & b### identifier with self.a### & r.a###
-        let expressions = rewrite_identifiers(expressions, |ident| {
-            basis.iter().find_map(move |b| {
-                if ident == &coefficient_ident("a", b) {
-                    Some(if obj.is_scalar {
-                        assert!(b.len() == 0);
-                        quote! { self }
-                    } else {
-                        // All fields are in the format "a###"
-                        // so we can re-use the temporary identifier
-                        let new_ident = ident;
-                        quote! { self.#new_ident }
-                    })
-                } else {
-                    None
-                }
-            })
-        });
-
-        let return_expr = if output_object.is_scalar {
-            let expr = &expressions[0];
-            quote! { #expr }
-        } else {
-            let output_fields: TokenStream = output_object
-                .select_components
-                .iter()
-                .zip(basis.iter().zip(expressions.iter()))
-                .enumerate()
-                .map(|(_i, (is_selected, (b, expr)))| {
-                    if !is_selected {
-                        return quote! {};
-                    }
-                    let field = coefficient_ident("a", b);
-                    quote! { #field: #expr, }
-                })
-                .collect();
-            quote! {
-                #output_type_name {
-                    #output_fields
-                }
-            }
-        };
-
-        let associated_output_type = quote! { type Output = #output_type_name; };
-
-        let code = quote! {
-            impl < T: Ring > #op_trait for #type_name {
-                #associated_output_type
-
-                fn #op_fn (self) -> #output_type_name {
-                    #return_expr
-                }
-            }
-        };
-
-        let alias_code = if let Some((alias_trait, alias_fn)) = alias {
-            quote! {
-                impl < T: Ring > #alias_trait for #type_name {
-                    #associated_output_type
-
-                    fn #alias_fn (self) -> #output_type_name {
-                        self.#op_fn()
-                    }
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        quote! {
-            #code
-            #alias_code
-        }
     }
 
     // Generate dot product multiplication table for the basis elements.
@@ -865,297 +1157,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
             })
             .collect()
     };
-
-    // Function to generate a sum of two objects, e.g. for overloading + or -
-    // The result will be a list of symbolic expressions,
-    // one for each coefficient value in the resultant multivector.
-    fn generate_symbolic_sum(
-        basis: &Vec<Vec<usize>>,
-        select_components_a: &[bool],
-        select_components_b: &[bool],
-        coef_a: isize,
-        coef_b: isize,
-    ) -> Vec<SymbolicSumExpr> {
-        // Generate the sum
-        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-
-        for (i, (&a_is_selected, &b_is_selected)) in select_components_a
-            .iter()
-            .zip(select_components_b.iter())
-            .enumerate()
-        {
-            if a_is_selected {
-                result[i] +=
-                    SymbolicProdExpr(coef_a, vec![Symbol(coefficient_ident("a", &basis[i]))]);
-            }
-            if b_is_selected {
-                result[i] +=
-                    SymbolicProdExpr(coef_b, vec![Symbol(coefficient_ident("b", &basis[i]))]);
-            }
-        }
-
-        result.into_iter().map(|expr| expr.simplify()).collect()
-    }
-
-    // Function to generate a product of two objects, e.g. geometric product, wedge product, etc.
-    // The result will be a list of symbolic expressions,
-    // one for each coefficient value in the resultant multivector.
-    fn generate_symbolic_product<F: Fn(usize, usize) -> (isize, usize)>(
-        basis: &Vec<Vec<usize>>,
-        select_components_a: &[bool],
-        select_components_b: &[bool],
-        product: F,
-    ) -> Vec<SymbolicSumExpr> {
-        // Generate the product
-        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-        for i in select_components_a
-            .iter()
-            .enumerate()
-            .filter_map(|(i, is_selected)| is_selected.then_some(i))
-        {
-            for j in select_components_b
-                .iter()
-                .enumerate()
-                .filter_map(|(j, is_selected)| is_selected.then_some(j))
-            {
-                let (coef, result_basis_ix) = product(i, j);
-
-                result[result_basis_ix] += SymbolicProdExpr(
-                    coef,
-                    vec![
-                        Symbol(coefficient_ident("a", &basis[i])),
-                        Symbol(coefficient_ident("b", &basis[j])),
-                    ],
-                );
-            }
-        }
-
-        result.into_iter().map(|expr| expr.simplify()).collect()
-    }
-
-    // Function to generate a double product of two objects, e.g. sandwich product, project,
-    // etc.
-    // The result will be a list of symbolic expressions,
-    // one for each coefficient value in the resultant multivector.
-    // The resulting code will implement the product in the following order:
-    // (B PRODUCT1 A) PRODUCT2 B
-    fn generate_symbolic_double_product<
-        F1: Fn(usize, usize) -> (isize, usize),
-        F2: Fn(usize, usize) -> (isize, usize),
-    >(
-        basis: &Vec<Vec<usize>>,
-        select_components_a: &[bool],
-        select_components_b: &[bool],
-        product_1: F1,
-        product_2: F2,
-    ) -> Vec<SymbolicSumExpr> {
-        // Generate the first intermediate product B PRODUCT1 A
-        // where i maps to components of B, and j maps to components of A
-        let mut intermediate_result: Vec<SymbolicSumExpr> =
-            vec![Default::default(); select_components_a.len()];
-        for i in select_components_b
-            .iter()
-            .enumerate()
-            .filter_map(|(i, is_selected)| is_selected.then_some(i))
-        {
-            for j in select_components_a
-                .iter()
-                .enumerate()
-                .filter_map(|(j, is_selected)| is_selected.then_some(j))
-            {
-                let (coef, result_basis_ix) = product_1(i, j);
-                intermediate_result[result_basis_ix] += SymbolicProdExpr(
-                    coef,
-                    vec![
-                        Symbol(coefficient_ident("b", &basis[i])),
-                        Symbol(coefficient_ident("a", &basis[j])),
-                    ],
-                );
-            }
-        }
-        let intermediate_result: Vec<_> = intermediate_result
-            .into_iter()
-            .map(|expr| expr.simplify())
-            .collect();
-
-        // Generate the final product (B PRODUCT1 A) PRODUCT2 B
-        // where i maps to components of the intermediate result B PRODUCT1 A
-        // and j maps to components of B.
-        let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-        for (i, intermediate_term) in intermediate_result.iter().enumerate() {
-            for j in select_components_b
-                .iter()
-                .enumerate()
-                .filter_map(|(j, is_selected)| is_selected.then_some(j))
-            {
-                let (coef, result_basis_ix) = product_2(i, j);
-                let new_term =
-                    SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("b", &basis[j]))]);
-                let result_term = intermediate_term.clone() * new_term;
-                result[result_basis_ix] += result_term;
-            }
-        }
-
-        result.into_iter().map(|expr| expr.simplify()).collect()
-    }
-
-    fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
-        basis: &Vec<Vec<usize>>,
-        objects: &[Object],
-        op_trait: TokenStream,
-        op_fn: Ident,
-        lhs_obj: &Object,
-        op: F,
-        implicit_promotion_to_compound: bool,
-        alias: Option<(TokenStream, Ident)>,
-    ) -> TokenStream {
-        objects
-            .iter()
-            .map(|rhs_obj| {
-                if lhs_obj.is_scalar {
-                    // Do not generate operations with the scalar being the LHS--
-                    // these violate rust's orphan rule
-                    // or result in conflicting trait implementations.
-                    // Technically we could allow this for custom ops such as T::cross(r: Vector<T>)
-                    // but we won't for the sake of consistency.
-                    // Use Vector<T>::cross(r: T) instead.
-                    return quote! {};
-                }
-
-                let expressions = op(&lhs_obj.select_components, &rhs_obj.select_components);
-
-                let select_output_components: Vec<_> = expressions
-                    .iter()
-                    .map(|SymbolicSumExpr(e)| e.len() != 0)
-                    .collect();
-                let output_object = objects.iter().find(|o| {
-                    o.select_components
-                        .iter()
-                        .zip(select_output_components.iter())
-                        .find(|&(obj_c, &out_c)| out_c && !obj_c)
-                        .is_none()
-                });
-
-                let Some(output_object) = output_object else {
-                    // No output object matches the result we got,
-                    // so don't generate any code
-                    return quote! {};
-                };
-
-                let rhs_type_name = &rhs_obj.type_name();
-                let lhs_type_name = &lhs_obj.type_name();
-                let output_type_name = &output_object.type_name_colons();
-
-                if !implicit_promotion_to_compound
-                    && output_object.is_compound
-                    && !(lhs_obj.is_compound || rhs_obj.is_compound)
-                {
-                    // Do not create compound objects unintentionally.
-                    // Only allow returning a compound object
-                    // when taking products of compound objects and other objects
-                    return quote! {};
-                }
-
-                if output_object.is_scalar && expressions[0].0.len() == 0 {
-                    // This operation unconditionally returns 0,
-                    // so invoking it is probably a type error--
-                    // do not generate code for it.
-
-                    return quote! {};
-                }
-
-                // Convert the expression to token trees
-                let expressions: Vec<TokenStream> = expressions
-                    .into_iter()
-                    .map(|expr| quote! { #expr })
-                    .collect();
-
-                // Find and replace temporary a### & b### identifier with self.a### & r.a###
-                let expressions = rewrite_identifiers(expressions, |ident| {
-                    basis.iter().find_map(move |b| {
-                        if ident == &coefficient_ident("a", b) {
-                            Some(if lhs_obj.is_scalar {
-                                assert!(b.len() == 0);
-                                quote! { self }
-                            } else {
-                                // All fields are in the format "a###"
-                                // so we can re-use the temporary identifier
-                                let new_ident = ident;
-                                quote! { self.#new_ident }
-                            })
-                        } else if ident == &coefficient_ident("b", b) {
-                            Some(if rhs_obj.is_scalar {
-                                assert!(b.len() == 0);
-                                quote! { r }
-                            } else {
-                                // All fields are in the format "a###"
-                                // so we need to convert b### to a###
-                                let new_ident = coefficient_ident("a", b);
-                                quote! { r.#new_ident }
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                });
-
-                let return_expr = if output_object.is_scalar {
-                    let expr = &expressions[0];
-                    quote! { #expr }
-                } else {
-                    let output_fields: TokenStream = output_object
-                        .select_components
-                        .iter()
-                        .zip(basis.iter().zip(expressions.iter()))
-                        .enumerate()
-                        .map(|(_i, (is_selected, (b, expr)))| {
-                            if !is_selected {
-                                return quote! {};
-                            }
-                            let field = coefficient_ident("a", b);
-                            quote! { #field: #expr, }
-                        })
-                        .collect();
-                    quote! {
-                        #output_type_name {
-                            #output_fields
-                        }
-                    }
-                };
-
-                let associated_output_type = quote! { type Output = #output_type_name; };
-
-                let code = quote! {
-                    impl < T: Ring > #op_trait < #rhs_type_name >  for #lhs_type_name {
-                        #associated_output_type
-
-                        fn #op_fn (self, r: #rhs_type_name) -> #output_type_name {
-                            #return_expr
-                        }
-                    }
-                };
-
-                let alias_code = if let Some((alias_trait, alias_fn)) = &alias {
-                    quote! {
-                        impl < T: Ring > #alias_trait < #rhs_type_name > for #lhs_type_name {
-                            #associated_output_type
-
-                            fn #alias_fn (self, r: #rhs_type_name) -> #output_type_name {
-                                self.#op_fn(r)
-                            }
-                        }
-                    }
-                } else {
-                    quote! {}
-                };
-
-                quote! {
-                    #code
-                    #alias_code
-                }
-            })
-            .collect()
-    }
 
     // Generate struct & impl for each object
     let struct_code: TokenStream = objects
@@ -2427,12 +2428,21 @@ fn gen_algebra2(input: Input) -> TokenStream {
     }
 }
 
+fn derive_geometric_algebra2(input: TokenStream) -> TokenStream {
+    input
+}
+
 #[proc_macro]
 pub fn gen_algebra(input_tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // Parse input
     let input = parse_macro_input!(input_tokens as Input);
 
     gen_algebra2(input).into()
+}
+
+#[proc_macro_derive(GeometricAlgebra, attributes(multivector, metric))]
+pub fn derive_geometric_algebra(input_tokens: proc_macro::TokenStream) -> proc_macro::TokenStream  {
+    derive_geometric_algebra2(input_tokens.into()).into()
 }
 
 #[cfg(test)]
@@ -2443,6 +2453,19 @@ mod tests {
     fn gen_algebra() {
         gen_algebra2(Input {
             basis_vector_squares: vec![1, 1, 1, 0],
+        });
+    }
+
+    #[test]
+    fn derive_geometric_algebra() {
+        derive_geometric_algebra2(quote! {
+            #[basis_vectors(w, x, y)]
+            #[metric(0, 1, 1)]
+            mod pga2d {
+                #[multivector]
+                struct<T> Vector<T> {
+                }
+            }
         });
     }
 }

@@ -209,7 +209,7 @@ pub mod scalar {
     /// /// f32 wrapper around real numbers
     /// /// that does not implement `Recip`
     /// // TODO write derive macro for Abs, Ring, Sqrt, etc.
-    /// #[derive(Clone, Copy, PartialEq, PartialOrd)]
+    /// #[derive(Clone, Copy, PartialEq, PartialOrd, Default)]
     /// struct R32(pub f32);
     /// impl core::ops::Add<R32> for R32 {
     ///     type Output = R32;
@@ -645,7 +645,7 @@ pub mod ops {
     /// use ngeom::ops::*;
     /// use ngeom::scalar::*;
     ///
-    /// let p1 = ideal_point([3., 4.]);
+    /// let p1 = Vector::ideal_point([3., 4.]);
     /// let p2 = p1 * 2.;
     /// assert_eq!(p1.bulk_norm(), (5.).into());
     /// assert_eq!(p2.bulk_norm(), (10.).into());
@@ -661,11 +661,11 @@ pub mod ops {
     /// use ngeom::ops::*;
     ///
     /// // Construct two unitized parallel lines
-    /// let l1 = point([0., 0.])
-    ///     .join(point([10., 0.]))
+    /// let l1 = Vector::point([0., 0.])
+    ///     .join(Vector::point([10., 0.]))
     ///     .unitized();
-    /// let l2 = point([0., 10.])
-    ///     .join(point([10., 10.]))
+    /// let l2 = Vector::point([0., 10.])
+    ///     .join(Vector::point([10., 10.]))
     ///     .unitized();
     ///
     /// // Intersect the two parallel lines to get a point at infinity
@@ -696,7 +696,7 @@ pub mod ops {
     /// use ngeom::pga2d::*;
     /// use ngeom::ops::*;
     ///
-    /// let p1 = point([2, 3]);
+    /// let p1 = Vector::point([2, 3]);
     /// let p2 = p1 * 5;
     /// assert_eq!(p1.weight_norm(), (1).into());
     /// assert_eq!(p2.weight_norm(), (5).into());
@@ -716,8 +716,8 @@ pub mod ops {
     /// use ngeom::ops::*;
     ///
     /// // Join two points into a line
-    /// let p1 = point([10., 10.]);
-    /// let p2 = point([13., 14.]);
+    /// let p1 = Vector::point([10., 10.]);
+    /// let p2 = Vector::point([13., 14.]);
     /// let l = p1.join(p2);
     ///
     /// // The weight norm of the line is the distance between the points
@@ -747,19 +747,19 @@ pub mod ops {
     /// // Join two points into a line
     /// // The direction of the line goes from p1 to p2,
     /// // towards +X in this case
-    /// let p1 = point([0., 0., 0.]);
-    /// let p2 = point([10., 0., 0.]);
+    /// let p1 = Vector::point([0., 0., 0.]);
+    /// let p2 = Vector::point([10., 0., 0.]);
     /// let l = p1.join(p2);
     ///
     /// // Join a line and a point into a plane
     /// // The direction of the plane goes from l to p3,
     /// // which produces the +XY plane in this case
-    /// let p3 = point([5., 5., 0.]);
+    /// let p3 = Vector::point([5., 5., 0.]);
     /// let pl = l.join(p3);
     ///
     /// // Join a plane and a point into a volume
     /// // The direction of the volume is oriented according to the right hand rule.
-    /// let p4 = point([3., 2., 15.]);
+    /// let p4 = Vector::point([3., 2., 15.]);
     /// let v = pl.join(p4);
     ///
     /// // Since we built the volume right-handed,
@@ -779,8 +779,8 @@ pub mod ops {
     /// use ngeom::ops::*;
     ///
     /// // Join two coincident points
-    /// let p1 = point([4., 5., 6.]);
-    /// let p2 = point([4., 5., 6.]) * 2.; // Homogeneous scaling doesn't matter
+    /// let p1 = Vector::point([4., 5., 6.]);
+    /// let p2 = Vector::point([4., 5., 6.]) * 2.; // Homogeneous scaling doesn't matter
     /// let l = p1.join(p2);
     ///
     /// assert_eq!(l.weight_norm(), (0.).into())
@@ -805,17 +805,17 @@ pub mod ops {
     /// use ngeom::ops::*;
     ///
     /// // Join three points to get the XY plane
-    /// let xy = point([0., 0., 0.])
-    ///     .join(point([1., 0., 0.]))
-    ///     .join(point([0., 1., 0.]));
+    /// let xy = Vector::point([0., 0., 0.])
+    ///     .join(Vector::point([1., 0., 0.]))
+    ///     .join(Vector::point([0., 1., 0.]));
     ///
     /// // Join two points to get a line travelling in the -Z direction
-    /// let l = point([3., 4., 10.])
-    ///     .join(point([3., 4., 9.]));
+    /// let l = Vector::point([3., 4., 10.])
+    ///     .join(Vector::point([3., 4., 9.]));
     ///
     /// // Meet the plane and the line at a point
     /// let pt = xy.meet(l);
-    /// assert_eq!(pt.unitized(), point([3., 4., 0.]));
+    /// assert_eq!(pt.unitized(), Vector::point([3., 4., 0.]));
     /// ```
     ///
     /// `Meet` is exception-free.
@@ -827,11 +827,11 @@ pub mod ops {
     /// use ngeom::ops::*;
     ///
     /// // Construct two unitized parallel lines
-    /// let l1 = point([0., 0.])
-    ///     .join(point([10., 0.]))
+    /// let l1 = Vector::point([0., 0.])
+    ///     .join(Vector::point([10., 0.]))
     ///     .unitized();
-    /// let l2 = point([0., 10.])
-    ///     .join(point([10., 10.]))
+    /// let l2 = Vector::point([0., 10.])
+    ///     .join(Vector::point([10., 10.]))
     ///     .unitized();
     ///
     /// // Intersect the two parallel lines to get a point at infinity
@@ -1019,10 +1019,18 @@ pub mod ops {
         fn identity_motor() -> Self;
     }
 
+    pub fn identity_motor<E: IdentityMotor>() -> E {
+        E::identity_motor()
+    }
+
     /// Constructor for a unitized point at the origin
     pub trait Origin {
         /// Construct a [unitized](Unitized) point at the origin
         fn origin() -> Self;
+    }
+
+    pub fn origin<E: Origin>() -> E {
+        E::origin()
     }
 
     /// Constructor for a normalized vector (ideal point) in the X direction
@@ -1043,6 +1051,10 @@ pub mod ops {
         /// }
         /// ```
         fn x_hat() -> Self;
+    }
+
+    pub fn x_hat<E: XHat>() -> E {
+        E::x_hat()
     }
 
     /// Constructor for a normalized vector (ideal point) in the Y direction
@@ -1068,6 +1080,10 @@ pub mod ops {
         fn y_hat() -> Self;
     }
 
+    pub fn y_hat<E: YHat>() -> E {
+        E::y_hat()
+    }
+
     /// Constructor for a normalized vector (ideal point) in the Z direction
     pub trait ZHat {
         /// Construct a [normalized](Normalized) vector (ideal point) in the Z direction
@@ -1090,6 +1106,26 @@ pub mod ops {
         /// }
         /// ```
         fn z_hat() -> Self;
+    }
+
+    pub fn z_hat<E: ZHat>() -> E {
+        E::z_hat()
+    }
+
+    /// Constructor for a [unitized](Unitized) vector corresponding to a geometric point
+    /// at the given coordinates
+    pub trait Point<C> {
+        /// Construct a [unitized](Unitized) vector corresponding to a geometric point
+        /// at the given coordinates
+        fn point(x: C) -> Self;
+    }
+
+    /// Constructor for a vector corresponding to an ideal (infinite) point
+    /// at the given coordinates
+    pub trait IdealPoint<C> {
+        /// Construct a vector corresponding to an ideal (infinite) point
+        /// at the given coordinates
+        fn ideal_point(x: C) -> Self;
     }
 
     #[macro_export]
@@ -1197,38 +1233,35 @@ pub mod pga2d {
         }
     }
 
+    impl<T: Ring> IdentityMotor for AntiScalar<T> {
+        fn identity_motor() -> AntiScalar<T> {
+            AntiScalar { a012: T::one() }
+        }
+    }
+
     impl<T: Ring> IdentityMotor for AntiEven<T> {
         fn identity_motor() -> AntiEven<T> {
             AntiScalar { a012: T::one() }.into()
         }
     }
 
-    pub fn origin<T: Ring>() -> Vector<T> {
-        Vector::origin()
-    }
-
-    // Construction functions
-    pub fn point<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
-        Vector {
-            a0: T::one(),
-            a1: x,
-            a2: y,
+    impl<T: Ring> Point<[T; 2]> for Vector<T> {
+        fn point([x, y]: [T; 2]) -> Vector<T> {
+            Vector {
+                a0: T::one(),
+                a1: x,
+                a2: y,
+            }
         }
     }
 
-    pub fn ideal_point<T: Ring>([x, y]: [T; 2]) -> Vector<T> {
-        Vector {
-            a0: T::zero(),
-            a1: x,
-            a2: y,
-        }
-    }
-
-    pub fn homogeneous_point<T>([x, y, w]: [T; 3]) -> Vector<T> {
-        Vector {
-            a0: w,
-            a1: x,
-            a2: y,
+    impl<T: Ring> IdealPoint<[T; 2]> for Vector<T> {
+        fn ideal_point([x, y]: [T; 2]) -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: x,
+                a2: y,
+            }
         }
     }
 
@@ -1258,7 +1291,7 @@ pub mod pga2d {
 
     /// Translator towards ideal point p by its magnitude
     pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
-        origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
+        Vector::<T>::origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
     }
 }
 
@@ -1364,34 +1397,37 @@ pub mod pga3d {
         }
     }
 
-    pub fn origin<T: Ring>() -> Vector<T> {
-        Vector::origin()
-    }
-
-    pub fn point<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
-        Vector {
-            a0: T::one(),
-            a1: x,
-            a2: y,
-            a3: z,
+    impl<T: Ring> IdentityMotor for AntiScalar<T> {
+        fn identity_motor() -> AntiScalar<T> {
+            AntiScalar { a0123: T::one() }
         }
     }
 
-    pub fn ideal_point<T: Ring>([x, y, z]: [T; 3]) -> Vector<T> {
-        Vector {
-            a0: T::zero(),
-            a1: x,
-            a2: y,
-            a3: z,
+    impl<T: Ring> IdentityMotor for AntiEven<T> {
+        fn identity_motor() -> AntiEven<T> {
+            AntiScalar { a0123: T::one() }.into()
         }
     }
 
-    pub fn homogeneous_point<T>([x, y, z, w]: [T; 4]) -> Vector<T> {
-        Vector {
-            a0: w,
-            a1: x,
-            a2: y,
-            a3: z,
+    impl<T: Ring> Point<[T; 3]> for Vector<T> {
+        fn point([x, y, z]: [T; 3]) -> Vector<T> {
+            Vector {
+                a0: T::one(),
+                a1: x,
+                a2: y,
+                a3: z,
+            }
+        }
+    }
+
+    impl<T: Ring> IdealPoint<[T; 3]> for Vector<T> {
+        fn ideal_point([x, y, z]: [T; 3]) -> Vector<T> {
+            Vector {
+                a0: T::zero(),
+                a1: x,
+                a2: y,
+                a3: z,
+            }
         }
     }
 
@@ -1402,12 +1438,6 @@ pub mod pga3d {
             a032: a,
             a013: b,
             a021: c,
-        }
-    }
-
-    impl<T: Ring> IdentityMotor for AntiEven<T> {
-        fn identity_motor() -> AntiEven<T> {
-            AntiScalar { a0123: T::one() }.into()
         }
     }
 
@@ -1428,7 +1458,7 @@ pub mod pga3d {
 
     /// Translator towards ideal point p by its magnitude
     pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
-        origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
+        Vector::<T>::origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
     }
 }
 
@@ -1517,23 +1547,12 @@ mod test {
     }
 
     #[test]
-    fn construction() {
-        // 2D
-        let _point = pga2d::point([3., 4.]);
-
-        // 3D
-        let _point = pga3d::point([3., 4., 5.]);
-
-        // TODO create higher objects like lines & planes
-    }
-
-    #[test]
     fn test_dist_2d() {
         // Distance between points
         // Joining the points results in a line whose norm is their unsigned distance
         {
-            let p1 = pga2d::point::<f32>([10., 10.]);
-            let p2 = pga2d::point([13., 14.]);
+            let p1 = pga2d::Vector::<f32>::point([10., 10.]);
+            let p2 = pga2d::Vector::point([13., 14.]);
 
             assert_close!(p1.join(p2).weight_norm(), (5.).into());
         }
@@ -1543,10 +1562,10 @@ mod test {
         {
             // Note that the line and the test point form a triangle that is wound
             // left-handed, producing a negative distance
-            let l = pga2d::point::<f32>([10., 10.])
-                .join(pga2d::point([10., 20.]))
+            let l = pga2d::Vector::<f32>::point([10., 10.])
+                .join(pga2d::Vector::point([10., 20.]))
                 .unitized();
-            let p = pga2d::point([15., 15.]);
+            let p = pga2d::Vector::point([15., 15.]);
             assert_close!(l.join(p).weight_norm(), (-5.).into());
         }
 
@@ -1555,11 +1574,11 @@ mod test {
         // More precisely, this expression yields the distance between the projection of the
         // origin onto each line.
         {
-            let l1 = pga2d::origin::<f32>()
-                .join(pga2d::point([3., 4.]))
+            let l1 = pga2d::Vector::<f32>::origin()
+                .join(pga2d::Vector::point([3., 4.]))
                 .unitized();
-            let l2 = pga2d::point::<f32>([4., -3.])
-                .join(pga2d::point([7., 1.]))
+            let l2 = pga2d::Vector::point([4., -3.])
+                .join(pga2d::Vector::point([7., 1.]))
                 .unitized();
             assert_close!(dbg!(l1.meet(l2)).bulk_norm(), 5.);
         }
@@ -1570,37 +1589,37 @@ mod test {
         // Distance between points
         // Joining the points results in a line whose norm is their unsigned distance
         {
-            let p1 = pga3d::point::<f32>([10., 10., 10.]);
-            let p2 = pga3d::point([13., 14., 10.]);
+            let p1 = pga3d::Vector::<f32>::point([10., 10., 10.]);
+            let p2 = pga3d::Vector::point([13., 14., 10.]);
             assert_close!(p1.join(p2).weight_norm(), (5.).into());
         }
 
         // Distnce between point & line
         // Joining the line & point results in a plane whose norm is their unsigned distance
         {
-            let l = pga3d::point::<f32>([10., 10., 10.])
-                .join(pga3d::point([10., 20., 10.]))
+            let l = pga3d::Vector::<f32>::point([10., 10., 10.])
+                .join(pga3d::Vector::point([10., 20., 10.]))
                 .unitized();
-            let p = pga3d::point([15., 15., 10.]);
+            let p = pga3d::Vector::point([15., 15., 10.]);
             assert_close!(l.join(p).weight_norm(), (5.).into());
         }
 
         {
-            let l = pga3d::point::<f32>([10., 10., 0.])
-                .join(pga3d::point([10., 10., 20.]))
+            let l = pga3d::Vector::<f32>::point([10., 10., 0.])
+                .join(pga3d::Vector::point([10., 10., 20.]))
                 .unitized();
-            let p = pga3d::point([13., 14., 10.]);
+            let p = pga3d::Vector::point([13., 14., 10.]);
             assert_close!(l.join(p).weight_norm(), (5.).into());
         }
 
         // Distance between point & plane
         // Joining the plane & point results in a scalar corresponding to their signed distance
         {
-            let pl = pga3d::point::<f32>([10., 10., 10.])
-                .join(pga3d::point([20., 10., 10.]))
-                .join(pga3d::point([10., 20., 10.]))
+            let pl = pga3d::Vector::<f32>::point([10., 10., 10.])
+                .join(pga3d::Vector::point([20., 10., 10.]))
+                .join(pga3d::Vector::point([10., 20., 10.]))
                 .unitized();
-            let pt = pga3d::point([15., 15., 15.]);
+            let pt = pga3d::Vector::point([15., 15., 15.]);
             assert_close!(pl.join(pt), (5.).into());
         }
 
@@ -1609,11 +1628,11 @@ mod test {
         // origin onto each line.
         {
             use super::algebraic_ops::AntiCommutator;
-            let l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+            let l1 = pga3d::Vector::<f32>::origin()
+                .join(pga3d::Vector::point([0., 0., 10.]))
                 .unitized();
-            let l2 = pga3d::point::<f32>([3., 4., 10.])
-                .join(pga3d::point([3., 4., 20.]))
+            let l2 = pga3d::Vector::<f32>::point([3., 4., 10.])
+                .join(pga3d::Vector::point([3., 4., 20.]))
                 .unitized();
             assert_close!(l1.anti_commutator(l2).bulk_norm(), 5.);
         }
@@ -1623,11 +1642,11 @@ mod test {
         // d is the distance between the lines, and a is the angle between them
         // (as measured along / about their shared normal)
         {
-            let _l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+            let _l1 = pga3d::Vector::<f32>::origin()
+                .join(pga3d::Vector::point([0., 0., 10.]))
                 .unitized();
-            let _l2 = pga3d::point::<f32>([8., 0., 15.])
-                .join(pga3d::point([8., 20., 15.]))
+            let _l2 = pga3d::Vector::<f32>::point([8., 0., 15.])
+                .join(pga3d::Vector::point([8., 20., 15.]))
                 .unitized();
             //assert_close!(l1.join(l2), pga3d::anti(-8.)); // XXX broken
         }
@@ -1636,11 +1655,11 @@ mod test {
         // This expression divides the join of the two lines (d * sin(a))
         // by the scalar norm of their commutator product, which is sin(a)
         {
-            let _l1 = pga3d::origin::<f32>()
-                .join(pga3d::point([0., 0., 10.]))
+            let _l1 = pga3d::Vector::<f32>::origin()
+                .join(pga3d::Vector::point([0., 0., 10.]))
                 .unitized();
-            let _l2 = pga3d::point([10., 0., 0.])
-                .join(pga3d::point([10., 5., 4.]))
+            let _l2 = pga3d::Vector::point([10., 0., 0.])
+                .join(pga3d::Vector::point([10., 5., 4.]))
                 .unitized();
 
             //assert_close!(l1.join(l2) + l1.anti_commutator(l2).weight_norm(), -10.) // XXX broken
@@ -1649,23 +1668,23 @@ mod test {
 
     #[test]
     fn test_sign_2d_triangle_winding() {
-        let p1 = pga2d::origin::<f32>();
-        let p2 = pga2d::point([1., 0.]);
-        let p3 = pga2d::point([0., 1.]);
+        let p1 = pga2d::Vector::<f32>::origin();
+        let p2 = pga2d::Vector::point([1., 0.]);
+        let p3 = pga2d::Vector::point([0., 1.]);
         assert!(p1.join(p2).join(p3) > (0.).into());
         assert!(p3.join(p2).join(p1) < (0.).into());
     }
 
     #[test]
     fn test_sign_2d_line_intersection() {
-        let l1 = pga2d::origin::<f32>()
-            .join(pga2d::point([10., 0.]))
+        let l1 = pga2d::Vector::<f32>::origin()
+            .join(pga2d::Vector::point([10., 0.]))
             .unitized();
-        let l2 = pga2d::point([0., 10.])
-            .join(pga2d::point([10., 9.]))
+        let l2 = pga2d::Vector::point([0., 10.])
+            .join(pga2d::Vector::point([10., 9.]))
             .unitized();
-        let l3 = pga2d::point([0., -10.])
-            .join(pga2d::point([-10., -9.]))
+        let l3 = pga2d::Vector::point([0., -10.])
+            .join(pga2d::Vector::point([-10., -9.]))
             .unitized();
 
         assert!(l1.meet(l2).weight_norm() < (0.).into());
@@ -1676,10 +1695,10 @@ mod test {
 
     #[test]
     fn test_sign_3d_tetrahedron_winding() {
-        let p1 = pga3d::origin::<f32>();
-        let p2 = pga3d::point([1., 0., 0.]);
-        let p3 = pga3d::point([0., 1., 0.]);
-        let p4 = pga3d::point([0., 0., 1.]);
+        let p1 = pga3d::Vector::<f32>::origin();
+        let p2 = pga3d::Vector::point([1., 0., 0.]);
+        let p3 = pga3d::Vector::point([0., 1., 0.]);
+        let p4 = pga3d::Vector::point([0., 0., 1.]);
         assert!(p1.join(p2).join(p3).join(p4) > (0.).into());
         assert!(p3.join(p2).join(p1).join(p4) < (0.).into());
     }
@@ -1690,14 +1709,14 @@ mod test {
         // It's impossible to reconcile the sign of this
         // with the sign of the plane-point version,
         // so we add the negative sign here
-        let l1 = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 0., 10.]))
+        let l1 = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([0., 0., 10.]))
             .unitized();
-        let l2 = pga3d::point::<f32>([8., 0., 15.])
-            .join(pga3d::point([8., 20., 15.]))
+        let l2 = pga3d::Vector::<f32>::point([8., 0., 15.])
+            .join(pga3d::Vector::point([8., 20., 15.]))
             .unitized();
-        let l3 = pga3d::point::<f32>([-10., 0., 0.])
-            .join(pga3d::point([-10., 20., -5.]))
+        let l3 = pga3d::Vector::<f32>::point([-10., 0., 0.])
+            .join(pga3d::Vector::point([-10., 20., -5.]))
             .unitized();
 
         assert!(l1.join(l2) > (0.).into());
@@ -1706,17 +1725,17 @@ mod test {
 
     #[test]
     fn test_sign_3d_plane_intersection() {
-        let p1 = pga3d::origin::<f32>()
-            .join(pga3d::point([1., 0., 0.]))
-            .join(pga3d::point([0., 1., 0.]))
+        let p1 = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([1., 0., 0.]))
+            .join(pga3d::Vector::point([0., 1., 0.]))
             .unitized();
-        let p2 = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 1., 0.]))
-            .join(pga3d::point([0., 0., 1.]))
+        let p2 = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([0., 1., 0.]))
+            .join(pga3d::Vector::point([0., 0., 1.]))
             .unitized();
-        let p3 = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 0., 1.]))
-            .join(pga3d::point([1., 0., 0.]))
+        let p3 = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([0., 0., 1.]))
+            .join(pga3d::Vector::point([1., 0., 0.]))
             .unitized();
 
         dbg!(p1.meet(p2).meet(p3).weight_norm() > (0.).into());
@@ -1724,10 +1743,10 @@ mod test {
 
     #[test]
     fn test_2d_line_normal() {
-        let l = pga2d::origin::<f32>()
-            .join(pga2d::point([1., 0.]))
+        let l = pga2d::Vector::<f32>::origin()
+            .join(pga2d::Vector::point([1., 0.]))
             .unitized();
-        let expected_dir = pga2d::ideal_point([0., 1.]);
+        let expected_dir = pga2d::Vector::ideal_point([0., 1.]);
 
         let d = l.normal();
 
@@ -1736,12 +1755,12 @@ mod test {
 
     #[test]
     fn test_plane_normal() {
-        let p = pga3d::origin::<f32>()
-            .join(pga3d::point([1., 0., 0.]))
-            .join(pga3d::point([0., 1., 0.]))
+        let p = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([1., 0., 0.]))
+            .join(pga3d::Vector::point([0., 1., 0.]))
             .unitized();
 
-        let expected_dir = pga3d::ideal_point([0., 0., 1.]);
+        let expected_dir = pga3d::Vector::ideal_point([0., 0., 1.]);
 
         let d = p.normal();
 
@@ -1750,170 +1769,188 @@ mod test {
 
     #[test]
     fn test_3d_line_normal() {
-        let l = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 1., 0.]))
+        let l = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([0., 1., 0.]))
             .unitized();
 
         let inf_line = l.normal();
 
         let expected_inf_line =
-            pga3d::ideal_point([0., 0., 1.]).join(pga3d::ideal_point([1., 0., 0.]));
+            pga3d::Vector::ideal_point([0., 0., 1.]).join(pga3d::Vector::ideal_point([1., 0., 0.]));
 
         assert!((inf_line - expected_inf_line).weight_norm_squared() < (1e-5 * 1e-5).into());
     }
 
     #[test]
     fn test_2d_rotation() {
-        let p = pga2d::point([1., 0.]);
-        let motor = pga2d::axis_angle(pga2d::origin(), 0.25 * core::f32::consts::TAU);
-        assert_close!(p.transform(motor), pga2d::point([0., 1.]));
+        let p = pga2d::Vector::point([1., 0.]);
+        let motor = pga2d::axis_angle(pga2d::Vector::origin(), 0.25 * core::f32::consts::TAU);
+        assert_close!(p.transform(motor), pga2d::Vector::point([0., 1.]));
     }
 
     #[test]
     fn test_3d_rotation() {
-        let p = pga3d::point([1., 0., 0.]);
-        let l = pga3d::origin::<f32>()
-            .join(pga3d::point([0., 0., 1.]))
+        let p = pga3d::Vector::point([1., 0., 0.]);
+        let l = pga3d::Vector::<f32>::origin()
+            .join(pga3d::Vector::point([0., 0., 1.]))
             .unitized();
         let motor = pga3d::axis_angle(l, 0.25 * core::f32::consts::TAU);
-        assert_close!(p.transform(motor), pga3d::point([0., 1., 0.]));
+        assert_close!(p.transform(motor), pga3d::Vector::point([0., 1., 0.]));
     }
 
     #[test]
     fn test_2d_translation() {
-        let p1 = pga2d::point([10., 10.]);
+        let p1 = pga2d::Vector::point([10., 10.]);
 
-        let motor = pga2d::translator(pga2d::ideal_point([0., 5.]));
+        let motor = pga2d::translator(pga2d::Vector::ideal_point([0., 5.]));
 
         let p2 = p1.transform(motor);
-        assert_close!(p2, pga2d::point([10., 15.]));
+        assert_close!(p2, pga2d::Vector::point([10., 15.]));
     }
 
     #[test]
     fn test_3d_translation() {
-        let p1 = pga3d::point([10., 10., 10.]);
+        let p1 = pga3d::Vector::point([10., 10., 10.]);
 
-        let motor = pga3d::translator(pga3d::ideal_point([0., 5., 0.]));
+        let motor = pga3d::translator(pga3d::Vector::ideal_point([0., 5., 0.]));
 
         let p2 = p1.transform(motor);
-        assert_close!(p2, pga3d::point([10., 15., 10.]));
+        assert_close!(p2, pga3d::Vector::point([10., 15., 10.]));
     }
 
     #[test]
     fn test_2d_translation_from_geo() {
-        let p1 = pga2d::point([10., 10.]);
+        let p1 = pga2d::Vector::point([10., 10.]);
 
-        let motor = pga2d::point([50., 50.]).motor_to(pga2d::point([50., 52.5]));
+        let motor = pga2d::Vector::point([50., 50.]).motor_to(pga2d::Vector::point([50., 52.5]));
 
         let p2 = p1.transform(motor);
-        assert_close!(p2, pga2d::point([10., 15.]));
+        assert_close!(p2, pga2d::Vector::point([10., 15.]));
     }
 
     #[test]
     fn test_2d_rotation_from_geo() {
-        let p = pga2d::point([1., 0.]);
+        let p = pga2d::Vector::point([1., 0.]);
 
-        let rot_l1 = pga2d::origin().join(pga2d::point([10., 0.])).unitized();
-        let rot_l2 = pga2d::origin().join(pga2d::point([10., 10.])).unitized();
+        let rot_l1 = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([10., 0.]))
+            .unitized();
+        let rot_l2 = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([10., 10.]))
+            .unitized();
         let motor = rot_l1.motor_to(rot_l2);
 
-        assert_close!(p.transform(motor), pga2d::point([0., 1.]));
+        assert_close!(p.transform(motor), pga2d::Vector::point([0., 1.]));
     }
 
     #[test]
     fn test_2d_compose_rotations() {
-        let p = pga2d::point([10., 10.]);
+        let p = pga2d::Vector::point([10., 10.]);
 
-        let translate_up_5 = pga2d::translator(pga2d::ideal_point([0., 5.]));
-        let rotate_90 = pga2d::axis_angle(pga2d::origin(), 0.25 * core::f32::consts::TAU);
+        let translate_up_5 = pga2d::translator(pga2d::Vector::ideal_point([0., 5.]));
+        let rotate_90 = pga2d::axis_angle(pga2d::Vector::origin(), 0.25 * core::f32::consts::TAU);
 
         let up_then_rotate = translate_up_5.compose(rotate_90);
-        assert_close!(p.transform(up_then_rotate), pga2d::point([-15., 10.]));
+        assert_close!(
+            p.transform(up_then_rotate),
+            pga2d::Vector::point([-15., 10.])
+        );
 
         let rotate_then_up = rotate_90.compose(translate_up_5);
-        assert_close!(p.transform(rotate_then_up), pga2d::point([-10., 15.]));
+        assert_close!(
+            p.transform(rotate_then_up),
+            pga2d::Vector::point([-10., 15.])
+        );
     }
 
     #[test]
     fn test_2d_motor_between_parallel_lines() {
-        let rot_l1 = pga2d::origin().join(pga2d::point([10., 0.])).unitized();
-        let rot_l2 = pga2d::point([0., 10.])
-            .join(pga2d::point([10., 10.]))
+        let rot_l1 = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([10., 0.]))
+            .unitized();
+        let rot_l2 = pga2d::Vector::point([0., 10.])
+            .join(pga2d::Vector::point([10., 10.]))
             .unitized();
         let motor = rot_l1.motor_to(rot_l2);
 
-        let p = pga2d::origin();
-        assert_close!(p.transform(motor), pga2d::point([0., 20.]));
+        let p = pga2d::Vector::origin();
+        assert_close!(p.transform(motor), pga2d::Vector::point([0., 20.]));
     }
 
     #[test]
     fn test_2d_superset_orthogonal_to() {
-        let l = pga2d::origin().join(pga2d::point([1., 1.])).unitized();
-        let p = pga2d::point([0., 2.]);
+        let l = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([1., 1.]))
+            .unitized();
+        let p = pga2d::Vector::point([0., 2.]);
         let l2 = p.superset_orthogonal_to(l);
 
-        let expected_l2 = pga2d::point([1., 1.]).join(p).unitized();
+        let expected_l2 = pga2d::Vector::point([1., 1.]).join(p).unitized();
 
         assert_close!(l2, expected_l2);
     }
 
     #[test]
     fn test_3d_superset_orthogonal_to() {
-        let pl = pga3d::origin()
-            .join(pga3d::point([0., 0., 10.]))
-            .join(pga3d::point([1., 1., 10.]))
+        let pl = pga3d::Vector::origin()
+            .join(pga3d::Vector::point([0., 0., 10.]))
+            .join(pga3d::Vector::point([1., 1., 10.]))
             .unitized();
-        let p = pga3d::point([0., 2., 10.]);
+        let p = pga3d::Vector::point([0., 2., 10.]);
         let l = p.superset_orthogonal_to(pl);
 
-        let expected_l = pga3d::point([1., 1., 10.]).join(p).unitized();
+        let expected_l = pga3d::Vector::point([1., 1., 10.]).join(p).unitized();
 
         assert_close!(l, expected_l);
     }
 
     #[test]
     fn test_2d_projection() {
-        let l = pga2d::origin().join(pga2d::point([1., 1.])).unitized();
-        let p = pga2d::point([0., 2.]);
+        let l = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([1., 1.]))
+            .unitized();
+        let p = pga2d::Vector::point([0., 2.]);
         let p2 = p.projection(l).unitized();
 
-        assert_close!(p2, pga2d::point([1., 1.]));
+        assert_close!(p2, pga2d::Vector::point([1., 1.]));
     }
 
     #[test]
     fn test_3d_projection_pt_onto_plane() {
-        let pl = pga3d::origin()
-            .join(pga3d::point([0., 0., 10.]))
-            .join(pga3d::point([1., 1., 10.]))
+        let pl = pga3d::Vector::origin()
+            .join(pga3d::Vector::point([0., 0., 10.]))
+            .join(pga3d::Vector::point([1., 1., 10.]))
             .unitized();
-        let p = pga3d::point([0., 2., 10.]);
+        let p = pga3d::Vector::point([0., 2., 10.]);
         let p2 = p.projection(pl).unitized();
 
-        assert_close!(p2, pga3d::point([1., 1., 10.]));
+        assert_close!(p2, pga3d::Vector::point([1., 1., 10.]));
     }
 
     #[test]
     fn test_2d_anti_projection() {
-        let l = pga2d::origin().join(pga2d::point([1., 1.])).unitized();
-        let p = pga2d::point([0., 2.]);
+        let l = pga2d::Vector::origin()
+            .join(pga2d::Vector::point([1., 1.]))
+            .unitized();
+        let p = pga2d::Vector::point([0., 2.]);
         let l2 = l.anti_projection(p).unitized();
 
-        let expected_l2 = p.join(pga2d::ideal_point([1., 1.])).unitized();
+        let expected_l2 = p.join(pga2d::Vector::ideal_point([1., 1.])).unitized();
         assert_close!(l2, expected_l2);
     }
 
     #[test]
     fn test_3d_anti_projection_plane_onto_pt() {
-        let pl = pga3d::origin()
-            .join(pga3d::point([0., 0., 10.]))
-            .join(pga3d::point([1., 1., 10.]))
+        let pl = pga3d::Vector::origin()
+            .join(pga3d::Vector::point([0., 0., 10.]))
+            .join(pga3d::Vector::point([1., 1., 10.]))
             .unitized();
-        let p = pga3d::point([0., 2., 10.]);
+        let p = pga3d::Vector::point([0., 2., 10.]);
         let pl2 = pl.anti_projection(p).unitized();
 
         let expected_pl2 = p
-            .join(pga3d::ideal_point([0., 0., 1.]))
-            .join(pga3d::ideal_point([1., 1., 10.]))
+            .join(pga3d::Vector::ideal_point([0., 0., 1.]))
+            .join(pga3d::Vector::ideal_point([1., 1., 10.]))
             .unitized();
 
         assert_close!(pl2, expected_pl2);
@@ -1921,18 +1958,18 @@ mod test {
 
     #[test]
     fn test_3d_projection_line_onto_plane() {
-        let pl = pga3d::point([0., 0., 10.])
-            .join(pga3d::point([1., 0., 10.]))
-            .join(pga3d::point([0., 1., 10.]))
+        let pl = pga3d::Vector::point([0., 0., 10.])
+            .join(pga3d::Vector::point([1., 0., 10.]))
+            .join(pga3d::Vector::point([0., 1., 10.]))
             .unitized();
-        let l = pga3d::point([0., 20., 20.])
-            .join(pga3d::point([1., 20., 20.]))
+        let l = pga3d::Vector::point([0., 20., 20.])
+            .join(pga3d::Vector::point([1., 20., 20.]))
             .unitized();
 
         let l2 = l.projection(pl).unitized();
 
-        let expected_l2 = pga3d::point([0., 20., 10.])
-            .join(pga3d::point([1., 20., 10.]))
+        let expected_l2 = pga3d::Vector::point([0., 20., 10.])
+            .join(pga3d::Vector::point([1., 20., 10.]))
             .unitized();
 
         assert_close!(l2, expected_l2);
@@ -1940,18 +1977,18 @@ mod test {
 
     #[test]
     fn test_3d_central_projection_line_onto_plane() {
-        let pl = pga3d::point([0., 0., 10.])
-            .join(pga3d::point([1., 0., 10.]))
-            .join(pga3d::point([0., 1., 10.]))
+        let pl = pga3d::Vector::point([0., 0., 10.])
+            .join(pga3d::Vector::point([1., 0., 10.]))
+            .join(pga3d::Vector::point([0., 1., 10.]))
             .unitized();
-        let l = pga3d::point([0., 20., 20.])
-            .join(pga3d::point([1., 20., 20.]))
+        let l = pga3d::Vector::point([0., 20., 20.])
+            .join(pga3d::Vector::point([1., 20., 20.]))
             .unitized();
 
         let l2 = l.central_projection(pl).unitized();
 
-        let expected_l2 = pga3d::point([0., 10., 10.])
-            .join(pga3d::point([1., 10., 10.]))
+        let expected_l2 = pga3d::Vector::point([0., 10., 10.])
+            .join(pga3d::Vector::point([1., 10., 10.]))
             .unitized();
 
         assert_close!(l2, expected_l2);
@@ -1963,8 +2000,8 @@ mod test {
         // Angle between lines in 2D
         assert_close!(
             angle(
-                pga2d::origin::<f32>().vee(pga2d::point([0., 5.])),
-                pga2d::origin().vee(pga2d::point([-10., 10.]))
+                pga2d::Vector::<f32>::origin().vee(pga2d::Vector::point([0., 5.])),
+                pga2d::Vector::origin().vee(pga2d::Vector::point([-10., 10.]))
             ),
             0.125 * core::f32::consts::TAU,
         );
@@ -1972,24 +2009,24 @@ mod test {
         // Angle between planes in 3D
         assert_close!(
             angle(
-                pga3d::origin::<f32>()
-                    .vee(pga3d::point([0., 0., 1.]))
-                    .vee(pga3d::point([0., 5., 0.])),
-                pga3d::origin()
-                    .vee(pga3d::point([0., 0., 1.]))
-                    .vee(pga3d::point([-10., 10., 0.]))
+                pga3d::Vector::<f32>::origin()
+                    .vee(pga3d::Vector::point([0., 0., 1.]))
+                    .vee(pga3d::Vector::point([0., 5., 0.])),
+                pga3d::Vector::origin()
+                    .vee(pga3d::Vector::point([0., 0., 1.]))
+                    .vee(pga3d::Vector::point([-10., 10., 0.]))
             ),
             0.125 * core::f32::consts::TAU,
         );
 
         {
             // Angle between line and plane
-            let pl = pga3d::origin::<f32>()
-                .vee(pga3d::point([1., 0., 0.]))
-                .vee(pga3d::point([0., 1., 0.]))
+            let pl = pga3d::Vector::<f32>::origin()
+                .vee(pga3d::Vector::point([1., 0., 0.]))
+                .vee(pga3d::Vector::point([0., 1., 0.]))
                 .hat();
-            let l = pga3d::point([10., 10., 0.])
-                .vee(pga3d::point([10., 20., 10.]))
+            let l = pga3d::Vector::point([10., 10., 0.])
+                .vee(pga3d::Vector::point([10., 20., 10.]))
                 .hat();
 
             // TODO sign is wrong here, why?
@@ -2003,31 +2040,31 @@ mod test {
     #[test]
     fn motor() {
         // 2D translation
-        let p1 = pga2d::point([10., 10.]);
+        let p1 = pga2d::Vector::point([10., 10.]);
 
-        let center = pga2d::ideal_point([1., 0.]) * -2.5;
+        let center = pga2d::Vector::ideal_point([1., 0.]) * -2.5;
         let motor = center.exp();
 
         let p2 = p1.transform(motor);
-        assert!(p2.is_close(pga2d::point([10., 15.])));
+        assert!(p2.is_close(pga2d::Vector::point([10., 15.])));
 
         // 2D rotation
-        let p1 = pga2d::point([10., 0.]);
+        let p1 = pga2d::Vector::point([10., 0.]);
 
         // This motor goes the wrong way??
-        let center = pga2d::origin() * (0.125 * core::f32::consts::TAU);
+        let center = pga2d::Vector::origin() * (0.125 * core::f32::consts::TAU);
         let motor = center.exp();
         dbg!(motor);
 
         // This one works
-        //let l1 = pga2d::origin().vee(pga2d::point([5., 5.]));
-        //let l2 = pga2d::origin().vee(pga2d::point([-10., 10.]));
+        //let l1 = pga2d::Vector::origin().vee(pga2d::Vector::point([5., 5.]));
+        //let l2 = pga2d::Vector::origin().vee(pga2d::Vector::point([-10., 10.]));
         //let motor = (l2 * l1).hat() + 1.;
         //dbg!(motor);
 
         let p2 = p1.transform(motor);
         dbg!(p2);
-        //assert_close!(p2, pga2d::point([0., 10.])); // XXX broken
+        //assert_close!(p2, pga2d::Vector::point([0., 10.])); // XXX broken
     }
     */
 }
