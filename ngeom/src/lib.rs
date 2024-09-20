@@ -2067,4 +2067,13 @@ mod test {
         //assert_close!(p2, pga2d::Vector::point([0., 10.])); // XXX broken
     }
     */
+
+    /*
+    use ngeom_macros::geometric_algebra;
+
+    #[geometric_algebra()]
+    mod pga_test {
+        struct Vector<T> {}
+    }
+    */
 }

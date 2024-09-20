@@ -4,9 +4,11 @@ use core::ops::{AddAssign, Mul};
 use proc_macro2::Span;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{quote, ToTokens, TokenStreamExt};
-use syn::parse::{Parse, ParseStream, Result};
+use syn::parse::{Parse, ParseStream, Result, Error};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Ident, LitInt, Token};
+use syn::{parse_macro_input, Ident, LitInt, Token, ItemMod, Item, Attribute, AttrStyle,
+          Path, Meta, Fields, FieldsNamed, Member, FieldValue, Expr, ExprArray, ExprPath,
+          ExprLit, Lit};
 
 struct Input {
     basis_vector_squares: Vec<isize>,
@@ -2428,10 +2430,6 @@ fn gen_algebra2(input: Input) -> TokenStream {
     }
 }
 
-fn derive_geometric_algebra2(input: TokenStream) -> TokenStream {
-    input
-}
-
 #[proc_macro]
 pub fn gen_algebra(input_tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
     // Parse input
@@ -2440,14 +2438,170 @@ pub fn gen_algebra(input_tokens: proc_macro::TokenStream) -> proc_macro::TokenSt
     gen_algebra2(input).into()
 }
 
-#[proc_macro_derive(GeometricAlgebra, attributes(multivector, metric))]
-pub fn derive_geometric_algebra(input_tokens: proc_macro::TokenStream) -> proc_macro::TokenStream  {
-    derive_geometric_algebra2(input_tokens.into()).into()
+// ATTRIBUTE MACRO
+
+#[derive(Debug)]
+struct AlgebraParameters {
+    basis: Vec<Ident>,
+    metric: Vec<isize>,
+}
+
+impl Parse for AlgebraParameters {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut basis = None;
+        let mut metric = None;
+
+        let params = Punctuated::<syn::FieldValue, syn::Token![,]>::parse_terminated(input)?;
+
+        let basis_ident = Ident::new("basis", Span::call_site());
+        let metric_ident = Ident::new("metric", Span::call_site());
+
+        for param in params.iter() {
+            let FieldValue {
+                member: Member::Named(ident),
+                colon_token: Some(..),
+                expr,
+                ..
+            } = param else {
+                return Err(Error::new(input.span(), "Expected a named parameter"));
+            };
+
+            if ident == &basis_ident {
+                if basis.is_some() {
+                    return Err(Error::new(ident.span(), "Duplicate basis field"));
+                }
+                // Parse the basis as a bracket-enclosed comma-separated list of identifiers
+                let Expr::Array(ExprArray { elems, .. }) = expr else {
+                    return Err(Error::new(ident.span(), "Expected basis to be an array"));
+                };
+                basis = Some(elems.iter().map(|elem| {
+                    if let Expr::Path(ExprPath { path, .. }) = elem  {
+                        if let Some(ident) = path.get_ident() {
+                            return Ok(ident.clone());
+                        }
+                    }
+                    Err(Error::new(ident.span(), "Expected basis element to be an identifier"))
+                }).collect::<Result<Vec<_>>>()?);
+            } else if ident == &metric_ident {
+                if metric.is_some() {
+                    return Err(Error::new(ident.span(), "Duplicate metric field"));
+                }
+                // Parse the metric as a bracket-enclosed comma-separated list of base-10 integers
+                let Expr::Array(ExprArray { elems, .. }) = expr else {
+                    return Err(Error::new(ident.span(), "Expected metric to be an array"));
+                };
+                metric = Some(elems.iter().map(|elem| {
+                    let Expr::Lit(ExprLit { lit: Lit::Int(lit_int), .. }) = elem else {
+                        return Err(Error::new(ident.span(), "Expected metric element to be an integer literal"))
+                    };
+                    lit_int.base10_parse()
+                }).collect::<Result<Vec<_>>>()?);
+            } else {
+                return Err(Error::new(ident.span(), "Expected `basis` or `metric`"));
+            }
+        }
+
+        let Some(basis) = basis else {
+            return Err(Error::new(input.span(), "Missing parameter: basis"));
+        };
+        let Some(metric) = metric else {
+            return Err(Error::new(input.span(), "Missing parameter: metric"));
+        };
+
+        Ok(AlgebraParameters {
+            basis,
+            metric,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct MultivectorStruct {
+    ident: Ident,
+    components: Vec<Ident>,
+}
+
+fn implement_geometric_algebra(parameters: AlgebraParameters, multivector_structs: Vec<MultivectorStruct>) -> TokenStream {
+    quote! {
+        // TODO!
+    }
+}
+
+fn geometric_algebra2(parameters: AlgebraParameters, mut code: ItemMod) -> Result<TokenStream> {
+    let mut struct_info = Vec::<MultivectorStruct>::new();
+
+    let Some((_, mod_items)) = code.content.as_mut() else {return Err(Error::new(code.ident.span(), "No module body"))};
+
+    let match_ident = Ident::new("multivector", Span::call_site());
+    for item in mod_items.iter_mut() {
+        match item {
+            Item::Struct(mod_item_struct) => {
+                let mut has_multivector_attribute = false;
+
+                mod_item_struct.attrs.retain(|attr| {
+                    if let Attribute {
+                        style: AttrStyle::Outer,
+                        meta: Meta::Path(Path {
+                            segments,
+                            ..
+                        }),
+                        ..
+                    } = attr {
+                        // Do not retain the #[multivector] attribute
+                        // but make note that we found it
+                        if segments.len() == 1 && segments.first().unwrap().ident == match_ident {
+                            has_multivector_attribute = true;
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                });
+
+                if has_multivector_attribute {
+                    // This struct is a multivector!
+                    // Parse its fields and add it to the struct_info list
+                    let Fields::Named(FieldsNamed {named: fields, ..}) = &mod_item_struct.fields else {
+                        return Err(Error::new(mod_item_struct.ident.span(), "Multivector must have named fields"))
+                    };
+
+                    // TODO check types
+                    let components = fields.iter().map(|field| Ok(field.ident.as_ref().unwrap().clone())).collect::<Result<Vec<_>>>()?;
+                    struct_info.push(MultivectorStruct {
+                        ident: mod_item_struct.ident.clone(),
+                        components,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Generate code
+    let generated_code = implement_geometric_algebra(parameters, struct_info);
+
+    // Add generated code to original code as a verbatim item
+    mod_items.push(Item::Verbatim(generated_code));
+
+    Ok(quote! {
+        #code
+    })
+}
+
+#[proc_macro_attribute]
+pub fn geometric_algebra(parameters: proc_macro::TokenStream, code: proc_macro::TokenStream) -> proc_macro::TokenStream  {
+    // Parse input
+    let parameters = parse_macro_input!(parameters as AlgebraParameters);
+    let input = parse_macro_input!(code as ItemMod);
+    geometric_algebra2(parameters, input).unwrap_or_else(Error::into_compile_error).into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use syn::parse2;
 
     #[test]
     fn gen_algebra() {
@@ -2458,14 +2612,28 @@ mod tests {
 
     #[test]
     fn derive_geometric_algebra() {
-        derive_geometric_algebra2(quote! {
-            #[basis_vectors(w, x, y)]
-            #[metric(0, 1, 1)]
-            mod pga2d {
-                #[multivector]
-                struct<T> Vector<T> {
+        let result = geometric_algebra2(
+            parse2(quote! {
+                basis: [w, x, y, z],
+                metric: [0, 1, 1, 1],
+            }).unwrap(),
+            parse2(quote! {
+                mod pga2d {
+                    #[multivector]
+                    struct Vector<T> {
+                        a: T,
+                        b: T,
+                        x: T,
+                        y: T,
+                    }
+
+                    #[not_multivector]
+                    struct Foo<T> {
+                    }
                 }
-            }
-        });
+            }).unwrap()
+        ).unwrap();
+        println!("{}", result);
+        panic!();
     }
 }
