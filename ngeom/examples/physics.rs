@@ -88,8 +88,8 @@ impl Space for Space2d {
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, x: pga2d::Vector<f32>) -> Point3<f32> {
-        Point3::new(x.a1, x.a2, 0.)
+    fn into_point3(&self, p: pga2d::Vector<f32>) -> Point3<f32> {
+        Point3::new(p.x, p.y, 0.)
     }
 }
 
@@ -140,8 +140,8 @@ impl Space for Space3d {
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, x: pga3d::Vector<f32>) -> Point3<f32> {
-        Point3::new(x.a1, x.a2, x.a3)
+    fn into_point3(&self, p: pga3d::Vector<f32>) -> Point3<f32> {
+        Point3::new(p.x, p.y, p.z)
     }
 }
 

@@ -39,14 +39,35 @@ struct SymbolicSumExpr(Vec<SymbolicProdExpr>);
 struct SymbolicProdExpr(isize, Vec<Symbol>);
 
 #[derive(PartialOrd, Ord, PartialEq, Eq, Clone)]
-struct Symbol(Ident, Ident); // Two Idents: a var and a field (i.e. var.field)
+enum Symbol {
+    Scalar(Ident),
+    StructField(Ident, Ident), // Two Idents: a var and a field (i.e. var.field)
+}
+
+//impl Symbol {
+//    // Construct a symbol: self.#field
+//    fn self_dot(field: Ident) -> Self {
+//        Symbol::StructField(Ident::new("self", Span::call_site()), field)
+//    }
+//
+//    // Construct a symbol: r.#field
+//    fn r_dot(field: Ident) -> Self {
+//        Symbol::StructField(Ident::new("r", Span::call_site()), field)
+//    }
+//}
 
 impl ToTokens for Symbol {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Symbol(var, field) = self;
-        var.to_tokens(tokens);
-        <Token![.]>::default().to_tokens(tokens);
-        field.to_tokens(tokens);
+        match self {
+            Symbol::StructField(var, field) => {
+                var.to_tokens(tokens);
+                <Token![.]>::default().to_tokens(tokens);
+                field.to_tokens(tokens);
+            }
+            Symbol::Scalar(var) => {
+                var.to_tokens(tokens);
+            }
+        }
     }
 }
 
@@ -101,7 +122,7 @@ impl ToTokens for SymbolicSumExpr {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let SymbolicSumExpr(terms) = self;
         if terms.len() == 0 {
-            tokens.append_all(quote! { T::zero() });
+            tokens.append_all(quote! { T::default() });
         } else {
             for (count, prod_expr) in terms.iter().enumerate() {
                 let SymbolicProdExpr(coef, prod_terms) = prod_expr;
@@ -119,7 +140,7 @@ impl ToTokens for SymbolicSumExpr {
                 if prod_terms.len() == 0 {
                     // If there are no symbols in the product, then this is a scalar
                     if coef == 0 {
-                        tokens.append_all(quote! { T::zero() });
+                        tokens.append_all(quote! { T::default() });
                     } else if coef == 1 {
                         tokens.append_all(quote! {
                             T::one()
@@ -130,7 +151,7 @@ impl ToTokens for SymbolicSumExpr {
                 } else {
                     // There are symbols in the product
                     if coef == 0 {
-                        tokens.append_all(quote! { T::zero() * });
+                        tokens.append_all(quote! { T::default() * });
                     } else if coef == 1 {
                         // No token needed if coefficient is unity
                     } else if coef == 2 {
@@ -229,39 +250,72 @@ fn left_complement(right_complement_signs: &Vec<isize>, coef: isize, i: usize) -
     (coef * right_complement_signs[complement_ix], complement_ix)
 }
 
-fn coefficient_ident(var: &str, basis: &[usize]) -> Ident {
-    let basis_pretty: String = basis.iter().map(|e| format!("{}", e)).collect();
-    Ident::new(&format!("{}{}", var, basis_pretty), Span::call_site())
-}
-
 // We will represent a multivector as an array of coefficients on the basis elements.
 // e.g. in 2D, there are 1 + 3 + 3 + 1 = 8 basis elements,
 // and a full multivector uses all of them: [1, 1, 1, 1, 1, 1, 1, 1]
 // An object such as a Bivector would only use a few of them: [0, 0, 0, 0, 1, 1, 1, 0]
 
 #[derive(PartialEq)]
-struct Object {
+enum Object {
+    Scalar,
+    Struct(StructObject),
+}
+
+#[derive(PartialEq)]
+struct StructObject {
     name: Ident,
     select_components: Vec<Option<(Ident, isize)>>,
-    is_scalar: bool,
     is_compound: bool,
 }
 
 impl Object {
     fn type_name(&self) -> TokenStream {
-        if self.is_scalar {
-            quote! { T }
-        } else {
-            let name = &self.name;
-            quote! { #name < T > }
+        match self {
+            Object::Scalar => quote! { T },
+            Object::Struct(StructObject { name, .. }) => {
+                quote! { #name < T > }
+            }
         }
     }
     fn type_name_colons(&self) -> TokenStream {
-        if self.is_scalar {
-            quote! { T }
-        } else {
-            let name = &self.name;
-            quote! { #name :: < T > }
+        match self {
+            Object::Scalar => quote! { T },
+            Object::Struct(StructObject { name, .. }) => {
+                quote! { #name :: < T > }
+            }
+        }
+    }
+    fn has_component(&self, i: usize) -> bool {
+        match self {
+            Object::Scalar => i == 0,
+            Object::Struct(StructObject {
+                select_components, ..
+            }) => select_components[i].is_some(),
+        }
+    }
+    fn is_compound(&self) -> bool {
+        match self {
+            Object::Scalar => false,
+            Object::Struct(StructObject { is_compound, .. }) => *is_compound,
+        }
+    }
+    fn select_components(&self, var: Ident, len: usize) -> Vec<Option<(Symbol, isize)>> {
+        match self {
+            Object::Scalar => {
+                let mut result = vec![None; len];
+                result[0] = Some((Symbol::Scalar(var), 1));
+                result
+            }
+            Object::Struct(StructObject {
+                select_components, ..
+            }) => select_components
+                .iter()
+                .map(|select_component| {
+                    select_component.as_ref().map(|(field, coef)| {
+                        (Symbol::StructField(var.clone(), field.clone()), *coef)
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -272,53 +326,42 @@ impl Object {
 // The result will be a list of symbolic expressions,
 // one for each coefficient value in the resultant multivector.
 fn generate_symbolic_rearrangement<F: Fn(isize, usize) -> (isize, usize)>(
-    select_components: &[Option<(Ident, isize)>],
+    select_components: &[Option<(Symbol, isize)>],
     op: F,
 ) -> Vec<SymbolicSumExpr> {
     // Generate the sum
     let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components.len()];
 
-    let self_ident = Ident::new("self", Span::call_site());
-
     for (i, is_selected) in select_components.iter().enumerate() {
-        if let Some((field, coef)) = is_selected {
+        if let Some((symbol, coef)) = is_selected {
             let (coef, result_basis_ix) = op(*coef, i);
-            result[result_basis_ix] +=
-                SymbolicProdExpr(coef, vec![Symbol(self_ident.clone(), field.clone())]);
+            result[result_basis_ix] += SymbolicProdExpr(coef, vec![symbol.clone()]);
         }
     }
 
     result.into_iter().map(|expr| expr.simplify()).collect()
 }
 
-/* TODO
-fn generate_symbolic_norm<F: Fn(usize, usize) -> (isize, usize)>(
-    basis: &Vec<Vec<usize>>,
-    select_components: &[bool],
+fn generate_symbolic_norm<F: Fn(isize, usize, isize, usize) -> (isize, usize)>(
+    select_components: &[Option<(Symbol, isize)>],
     product: F,
     sqrt: bool,
 ) -> Vec<SymbolicSumExpr> {
     // Generate the product
     let mut expressions: Vec<SymbolicSumExpr> = vec![Default::default(); select_components.len()];
-    for i in select_components
+    for (i, (i_symbol, i_coef)) in select_components
         .iter()
         .enumerate()
-        .filter_map(|(i, is_selected)| is_selected.then_some(i))
+        .filter_map(|(i, selected)| selected.as_ref().map(|selected| (i, selected)))
     {
-        for j in select_components
+        for (j, (j_symbol, j_coef)) in select_components
             .iter()
             .enumerate()
-            .filter_map(|(j, is_selected)| is_selected.then_some(j))
+            .filter_map(|(j, selected)| selected.as_ref().map(|selected| (j, selected)))
         {
-            let (coef, ix_result) = product(i, j);
+            let (coef, ix) = product(*i_coef, i, *j_coef, j);
 
-            expressions[ix_result] += SymbolicProdExpr(
-                coef,
-                vec![
-                    Symbol(coefficient_ident("a", &basis[i])),
-                    Symbol(coefficient_ident("a", &basis[j])),
-                ],
-            );
+            expressions[ix] += SymbolicProdExpr(coef, vec![i_symbol.clone(), j_symbol.clone()]);
         }
     }
 
@@ -387,7 +430,139 @@ fn generate_symbolic_norm<F: Fn(usize, usize) -> (isize, usize)>(
         expressions
     }
 }
-*/
+
+// Function to generate a sum of two objects, e.g. for overloading + or -
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+fn generate_symbolic_sum(
+    select_components_a: &[Option<(Symbol, isize)>],
+    select_components_b: &[Option<(Symbol, isize)>],
+    coef_a: isize,
+    coef_b: isize,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the sum
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+
+    for (i, (a_selected, b_selected)) in select_components_a
+        .iter()
+        .zip(select_components_b.iter())
+        .enumerate()
+    {
+        if let Some((symbol_a, coef_symbol_a)) = a_selected {
+            result[i] += SymbolicProdExpr(coef_symbol_a * coef_a, vec![symbol_a.clone()]);
+        }
+        if let Some((symbol_b, coef_symbol_b)) = b_selected {
+            result[i] += SymbolicProdExpr(coef_symbol_b * coef_b, vec![symbol_b.clone()]);
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+// Function to generate a product of two objects, e.g. geometric product, wedge product, etc.
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+fn generate_symbolic_product<F: Fn(isize, usize, isize, usize) -> (isize, usize)>(
+    select_components_a: &[Option<(Symbol, isize)>],
+    select_components_b: &[Option<(Symbol, isize)>],
+    product: F,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the product
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+    for (i, (i_symbol, i_coef)) in select_components_a
+        .iter()
+        .enumerate()
+        .filter_map(|(i, selected)| selected.as_ref().map(|selected| (i, selected)))
+    {
+        for (j, (j_symbol, j_coef)) in select_components_b
+            .iter()
+            .enumerate()
+            .filter_map(|(j, selected)| selected.as_ref().map(|selected| (j, selected)))
+        {
+            let (coef, ix) = product(*i_coef, i, *j_coef, j);
+
+            result[ix] += SymbolicProdExpr(coef, vec![i_symbol.clone(), j_symbol.clone()]);
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+// Function to generate a double product of two objects, e.g. sandwich product, project,
+// etc.
+// The result will be a list of symbolic expressions,
+// one for each coefficient value in the resultant multivector.
+// The resulting code will implement the product in the following order:
+// (B PRODUCT1 A) PRODUCT2 B
+fn generate_symbolic_double_product<
+    F1: Fn(isize, usize, isize, usize) -> (isize, usize),
+    F2: Fn(isize, usize, isize, usize) -> (isize, usize),
+>(
+    select_components_a: &[Option<(Symbol, isize)>],
+    select_components_b: &[Option<(Symbol, isize)>],
+    product_1: F1,
+    product_2: F2,
+) -> Vec<SymbolicSumExpr> {
+    // Generate the first intermediate product B PRODUCT1 A
+    // where i maps to components of B, and j maps to components of A
+    let mut intermediate_result: Vec<SymbolicSumExpr> =
+        vec![Default::default(); select_components_a.len()];
+    for (i, (i_symbol, i_coef)) in select_components_b
+        .iter()
+        .enumerate()
+        .filter_map(|(i, selected)| selected.as_ref().map(|selected| (i, selected)))
+    {
+        for (j, (j_symbol, j_coef)) in select_components_a
+            .iter()
+            .enumerate()
+            .filter_map(|(j, selected)| selected.as_ref().map(|selected| (j, selected)))
+        {
+            let (coef, ix) = product_1(*i_coef, i, *j_coef, j);
+            intermediate_result[ix] +=
+                SymbolicProdExpr(coef, vec![i_symbol.clone(), j_symbol.clone()]);
+        }
+    }
+    let intermediate_result: Vec<_> = intermediate_result
+        .into_iter()
+        .map(|expr| expr.simplify())
+        .collect();
+
+    // Generate the final product (B PRODUCT1 A) PRODUCT2 B
+    // where i maps to components of the intermediate result B PRODUCT1 A
+    // and j maps to components of B.
+    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
+    for (i, intermediate_term) in intermediate_result.iter().enumerate() {
+        for (j, (j_symbol, j_coef)) in select_components_b
+            .iter()
+            .enumerate()
+            .filter_map(|(j, selected)| selected.as_ref().map(|selected| (j, selected)))
+        {
+            let (coef, ix) = product_2(1, i, *j_coef, j);
+            let new_term = SymbolicProdExpr(coef, vec![j_symbol.clone()]);
+            let result_term = intermediate_term.clone() * new_term;
+            result[ix] += result_term;
+        }
+    }
+
+    result.into_iter().map(|expr| expr.simplify()).collect()
+}
+
+fn find_output_object<'a>(
+    objects: &'a [Object],
+    output_expressions: &[SymbolicSumExpr],
+) -> Option<&'a Object> {
+    let select_output_components: Vec<_> = output_expressions
+        .iter()
+        .map(|SymbolicSumExpr(e)| e.len() != 0)
+        .collect();
+    objects.iter().find(|o| {
+        select_output_components
+            .iter()
+            .enumerate()
+            .find(|&(i, &out_c)| out_c && !o.has_component(i))
+            .is_none()
+    })
+}
 
 fn gen_unary_operator(
     objects: &[Object],
@@ -397,25 +572,15 @@ fn gen_unary_operator(
     expressions: &[SymbolicSumExpr],
     alias: Option<(TokenStream, Ident)>,
 ) -> TokenStream {
-    if obj.is_scalar {
+    if matches!(obj, Object::Scalar) {
         // Do not generate operations with the scalar being the LHS--
         // typically because these would violate rust's orphan rule
         // or result in conflicting trait implementations
         return quote! {};
-    }
+    };
 
     // Figure out what the type of the output is
-    let select_output_components: Vec<_> = expressions
-        .iter()
-        .map(|SymbolicSumExpr(e)| e.len() != 0)
-        .collect();
-    let output_object = objects.iter().find(|o| {
-        o.select_components
-            .iter()
-            .zip(select_output_components.iter())
-            .find(|&(obj_c, &out_c)| out_c && obj_c.is_none())
-            .is_none()
-    });
+    let output_object = find_output_object(&objects, &expressions);
 
     let Some(output_object) = output_object else {
         // No output object matches the result we got,
@@ -423,7 +588,7 @@ fn gen_unary_operator(
         return quote! {};
     };
 
-    if output_object.is_scalar && expressions[0].0.len() == 0 {
+    if matches!(output_object, Object::Scalar) && expressions[0].0.len() == 0 {
         // This operation unconditionally returns 0,
         // so invoking it is probably a type error--
         // do not generate code for it
@@ -433,26 +598,29 @@ fn gen_unary_operator(
     let output_type_name = &output_object.type_name_colons();
     let type_name = &obj.type_name();
 
-    let return_expr = if output_object.is_scalar {
-        let expr = &expressions[0];
-        quote! { #expr }
-    } else {
-        let output_fields: TokenStream = output_object
-            .select_components
-            .iter()
-            .zip(expressions.iter())
-            .map(|(select_component, expr)| {
-                if let Some((field, coef)) = select_component {
-                    let expr = expr.clone() * *coef;
-                    quote! { #field: #expr, }
-                } else {
-                    return quote! {};
+    let return_expr = match output_object {
+        Object::Scalar => {
+            let expr = &expressions[0];
+            quote! { #expr }
+        }
+        Object::Struct(output_struct_object) => {
+            let output_fields: TokenStream = output_struct_object
+                .select_components
+                .iter()
+                .zip(expressions.iter())
+                .map(|(select_component, expr)| {
+                    if let Some((field, coef)) = select_component {
+                        let expr = expr.clone() * *coef;
+                        quote! { #field: #expr, }
+                    } else {
+                        return quote! {};
+                    }
+                })
+                .collect();
+            quote! {
+                #output_type_name {
+                    #output_fields
                 }
-            })
-            .collect();
-        quote! {
-            #output_type_name {
-                #output_fields
             }
         }
     };
@@ -489,140 +657,10 @@ fn gen_unary_operator(
     }
 }
 
-/* TODO
-
-// Function to generate a sum of two objects, e.g. for overloading + or -
-// The result will be a list of symbolic expressions,
-// one for each coefficient value in the resultant multivector.
-fn generate_symbolic_sum(
-    basis: &Vec<Vec<usize>>,
-    select_components_a: &[bool],
-    select_components_b: &[bool],
-    coef_a: isize,
-    coef_b: isize,
-) -> Vec<SymbolicSumExpr> {
-    // Generate the sum
-    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-
-    for (i, (&a_is_selected, &b_is_selected)) in select_components_a
-        .iter()
-        .zip(select_components_b.iter())
-        .enumerate()
-    {
-        if a_is_selected {
-            result[i] += SymbolicProdExpr(coef_a, vec![Symbol(coefficient_ident("a", &basis[i]))]);
-        }
-        if b_is_selected {
-            result[i] += SymbolicProdExpr(coef_b, vec![Symbol(coefficient_ident("b", &basis[i]))]);
-        }
-    }
-
-    result.into_iter().map(|expr| expr.simplify()).collect()
-}
-
-// Function to generate a product of two objects, e.g. geometric product, wedge product, etc.
-// The result will be a list of symbolic expressions,
-// one for each coefficient value in the resultant multivector.
-fn generate_symbolic_product<F: Fn(usize, usize) -> (isize, usize)>(
-    basis: &Vec<Vec<usize>>,
-    select_components_a: &[bool],
-    select_components_b: &[bool],
-    product: F,
-) -> Vec<SymbolicSumExpr> {
-    // Generate the product
-    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-    for i in select_components_a
-        .iter()
-        .enumerate()
-        .filter_map(|(i, is_selected)| is_selected.then_some(i))
-    {
-        for j in select_components_b
-            .iter()
-            .enumerate()
-            .filter_map(|(j, is_selected)| is_selected.then_some(j))
-        {
-            let (coef, result_basis_ix) = product(i, j);
-
-            result[result_basis_ix] += SymbolicProdExpr(
-                coef,
-                vec![
-                    Symbol(coefficient_ident("a", &basis[i])),
-                    Symbol(coefficient_ident("b", &basis[j])),
-                ],
-            );
-        }
-    }
-
-    result.into_iter().map(|expr| expr.simplify()).collect()
-}
-
-// Function to generate a double product of two objects, e.g. sandwich product, project,
-// etc.
-// The result will be a list of symbolic expressions,
-// one for each coefficient value in the resultant multivector.
-// The resulting code will implement the product in the following order:
-// (B PRODUCT1 A) PRODUCT2 B
-fn generate_symbolic_double_product<
-    F1: Fn(usize, usize) -> (isize, usize),
-    F2: Fn(usize, usize) -> (isize, usize),
+fn gen_binary_operator<
+    F: Fn(&[Option<(Symbol, isize)>], &[Option<(Symbol, isize)>]) -> Vec<SymbolicSumExpr>,
 >(
-    basis: &Vec<Vec<usize>>,
-    select_components_a: &[bool],
-    select_components_b: &[bool],
-    product_1: F1,
-    product_2: F2,
-) -> Vec<SymbolicSumExpr> {
-    // Generate the first intermediate product B PRODUCT1 A
-    // where i maps to components of B, and j maps to components of A
-    let mut intermediate_result: Vec<SymbolicSumExpr> =
-        vec![Default::default(); select_components_a.len()];
-    for i in select_components_b
-        .iter()
-        .enumerate()
-        .filter_map(|(i, is_selected)| is_selected.then_some(i))
-    {
-        for j in select_components_a
-            .iter()
-            .enumerate()
-            .filter_map(|(j, is_selected)| is_selected.then_some(j))
-        {
-            let (coef, result_basis_ix) = product_1(i, j);
-            intermediate_result[result_basis_ix] += SymbolicProdExpr(
-                coef,
-                vec![
-                    Symbol(coefficient_ident("b", &basis[i])),
-                    Symbol(coefficient_ident("a", &basis[j])),
-                ],
-            );
-        }
-    }
-    let intermediate_result: Vec<_> = intermediate_result
-        .into_iter()
-        .map(|expr| expr.simplify())
-        .collect();
-
-    // Generate the final product (B PRODUCT1 A) PRODUCT2 B
-    // where i maps to components of the intermediate result B PRODUCT1 A
-    // and j maps to components of B.
-    let mut result: Vec<SymbolicSumExpr> = vec![Default::default(); select_components_a.len()];
-    for (i, intermediate_term) in intermediate_result.iter().enumerate() {
-        for j in select_components_b
-            .iter()
-            .enumerate()
-            .filter_map(|(j, is_selected)| is_selected.then_some(j))
-        {
-            let (coef, result_basis_ix) = product_2(i, j);
-            let new_term = SymbolicProdExpr(coef, vec![Symbol(coefficient_ident("b", &basis[j]))]);
-            let result_term = intermediate_term.clone() * new_term;
-            result[result_basis_ix] += result_term;
-        }
-    }
-
-    result.into_iter().map(|expr| expr.simplify()).collect()
-}
-
-fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
-    basis: &Vec<Vec<usize>>,
+    basis_element_count: usize,
     objects: &[Object],
     op_trait: TokenStream,
     op_fn: Ident,
@@ -634,7 +672,7 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
     objects
         .iter()
         .map(|rhs_obj| {
-            if lhs_obj.is_scalar {
+            if matches!(lhs_obj, Object::Scalar) {
                 // Do not generate operations with the scalar being the LHS--
                 // these violate rust's orphan rule
                 // or result in conflicting trait implementations.
@@ -642,21 +680,16 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
                 // but we won't for the sake of consistency.
                 // Use Vector<T>::cross(r: T) instead.
                 return quote! {};
-            }
+            };
 
-            let expressions = op(&lhs_obj.select_components, &rhs_obj.select_components);
+            let expressions = op(
+                &lhs_obj
+                    .select_components(Ident::new("self", Span::call_site()), basis_element_count),
+                &rhs_obj.select_components(Ident::new("r", Span::call_site()), basis_element_count),
+            );
 
-            let select_output_components: Vec<_> = expressions
-                .iter()
-                .map(|SymbolicSumExpr(e)| e.len() != 0)
-                .collect();
-            let output_object = objects.iter().find(|o| {
-                o.select_components
-                    .iter()
-                    .zip(select_output_components.iter())
-                    .find(|&(obj_c, &out_c)| out_c && !obj_c)
-                    .is_none()
-            });
+            // Figure out what the type of the output is
+            let output_object = find_output_object(&objects, &expressions);
 
             let Some(output_object) = output_object else {
                 // No output object matches the result we got,
@@ -669,8 +702,8 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
             let output_type_name = &output_object.type_name_colons();
 
             if !implicit_promotion_to_compound
-                && output_object.is_compound
-                && !(lhs_obj.is_compound || rhs_obj.is_compound)
+                && output_object.is_compound()
+                && !(lhs_obj.is_compound() || rhs_obj.is_compound())
             {
                 // Do not create compound objects unintentionally.
                 // Only allow returning a compound object
@@ -678,7 +711,7 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
                 return quote! {};
             }
 
-            if output_object.is_scalar && expressions[0].0.len() == 0 {
+            if matches!(output_object, Object::Scalar) && expressions[0].0.len() == 0 {
                 // This operation unconditionally returns 0,
                 // so invoking it is probably a type error--
                 // do not generate code for it.
@@ -686,61 +719,29 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
                 return quote! {};
             }
 
-            // Convert the expression to token trees
-            let expressions: Vec<TokenStream> = expressions
-                .into_iter()
-                .map(|expr| quote! { #expr })
-                .collect();
-
-            // Find and replace temporary a### & b### identifier with self.a### & r.a###
-            let expressions = rewrite_identifiers(expressions, |ident| {
-                basis.iter().find_map(move |b| {
-                    if ident == &coefficient_ident("a", b) {
-                        Some(if lhs_obj.is_scalar {
-                            assert!(b.len() == 0);
-                            quote! { self }
-                        } else {
-                            // All fields are in the format "a###"
-                            // so we can re-use the temporary identifier
-                            let new_ident = ident;
-                            quote! { self.#new_ident }
+            let return_expr = match output_object {
+                Object::Scalar => {
+                    let expr = &expressions[0];
+                    quote! { #expr }
+                }
+                Object::Struct(output_struct_object) => {
+                    let output_fields: TokenStream = output_struct_object
+                        .select_components
+                        .iter()
+                        .zip(expressions.iter())
+                        .map(|(select_component, expr)| {
+                            if let Some((field, coef)) = select_component {
+                                let expr = expr.clone() * *coef;
+                                quote! { #field: #expr, }
+                            } else {
+                                return quote! {};
+                            }
                         })
-                    } else if ident == &coefficient_ident("b", b) {
-                        Some(if rhs_obj.is_scalar {
-                            assert!(b.len() == 0);
-                            quote! { r }
-                        } else {
-                            // All fields are in the format "a###"
-                            // so we need to convert b### to a###
-                            let new_ident = coefficient_ident("a", b);
-                            quote! { r.#new_ident }
-                        })
-                    } else {
-                        None
-                    }
-                })
-            });
-
-            let return_expr = if output_object.is_scalar {
-                let expr = &expressions[0];
-                quote! { #expr }
-            } else {
-                let output_fields: TokenStream = output_object
-                    .select_components
-                    .iter()
-                    .zip(basis.iter().zip(expressions.iter()))
-                    .enumerate()
-                    .map(|(_i, (is_selected, (b, expr)))| {
-                        if !is_selected {
-                            return quote! {};
+                        .collect();
+                    quote! {
+                        #output_type_name {
+                            #output_fields
                         }
-                        let field = coefficient_ident("a", b);
-                        quote! { #field: #expr, }
-                    })
-                    .collect();
-                quote! {
-                    #output_type_name {
-                        #output_fields
                     }
                 }
             };
@@ -778,8 +779,6 @@ fn gen_binary_operator<F: Fn(&[bool], &[bool]) -> Vec<SymbolicSumExpr>>(
         })
         .collect()
 }
-
-*/
 
 fn implement_geometric_algebra(
     parameters: AlgebraParameters,
@@ -864,19 +863,7 @@ fn implement_geometric_algebra(
     let ident_prefix_len = ident_prefix.chars().count();
 
     // Start with the scalar type
-    // TODO consider a different representation to avoid fake idents
-    let mut objects = vec![Object {
-        name: Ident::new("SENTINEL_SCALAR_STRUCT", Span::call_site()), // FAKE
-        select_components: (0..basis_element_count)
-            .map(|i| match i {
-                0 => Some((Ident::new("SENTINEL_SCALAR_FIELD", Span::call_site()), 1)), // Ident is FAKE
-                _ => None,
-            })
-            .collect(),
-        is_scalar: true,
-        is_compound: false,
-    }];
-
+    let mut objects = vec![Object::Scalar];
     let struct_objects = multivector_structs
         .iter()
         .map(|multivector_struct| {
@@ -947,12 +934,11 @@ fn implement_geometric_algebra(
                 .collect::<Vec<_>>();
             let is_compound = grades.windows(2).any(|g| g[0] != g[1]);
 
-            Ok(Object {
+            Ok(Object::Struct(StructObject {
                 name,
                 select_components,
-                is_scalar: false,
                 is_compound,
-            })
+            }))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -1060,6 +1046,19 @@ fn implement_geometric_algebra(
             .collect()
     };
 
+    let dot_product_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+        let coef_mul = dot_product_multiplication_table[i][j];
+        (coef_i * coef_j * coef_mul, 0)
+    };
+
+    let anti_dot_product_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+        let (i_coef, i) = right_complement(&right_complement_signs, coef_i, i);
+        let (j_coef, j) = right_complement(&right_complement_signs, coef_j, j);
+        let (coef, ix) = dot_product_f(i_coef, i, j_coef, j);
+        let (coef, ix) = left_complement(&right_complement_signs, coef, ix);
+        (coef, ix)
+    };
+
     // Generate geometric product multiplication table for the basis elements
     // Each entry is a tuple of the (coefficient, basis_index)
     // e.g. (1, 0) means the multiplication result is 1 * scalar = 1
@@ -1137,9 +1136,12 @@ fn implement_geometric_algebra(
         (coef, ix)
     };
 
-    /* TODO Add these back in!
+    // TODO Fix handling of antiscalar!
     let anti_scalar_ops: TokenStream = {
-        let field = coefficient_ident("a", &basis[basis.len() - 1]);
+        let field = Ident::new(
+            &(ident_prefix + &ident_variants.into_iter().collect::<String>()),
+            Span::call_site(),
+        );
 
         quote! {
             impl<T: Abs> AntiAbs for AntiScalar<T> {
@@ -1187,28 +1189,15 @@ fn implement_geometric_algebra(
                     }
                 }
             }
-
-            impl<T: core::cmp::PartialOrd> PartialOrd for AntiScalar<T> {
-                fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                    self.#field.partial_cmp(&other.#field)
-                }
-            }
-
-            impl<T: core::cmp::Ord> Ord for AntiScalar<T> {
-                fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                    self.#field.cmp(&other.#field)
-                }
-            }
         }
     };
-    */
 
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
             // Derive From / Into
             let from_code: TokenStream = {
-                if obj.is_scalar {
+                if matches!(obj, Object::Scalar) {
                     // Do not implement From on the scalar--
                     // typically because these would violate rust's orphan rule
                     // and are also not useful
@@ -1218,51 +1207,65 @@ fn implement_geometric_algebra(
                 objects.iter().map(|other_obj| {
                     // See if the object we are converting from
                     // contains a non-empty strict subset of the components in our object
-                    let is_subset = obj.select_components.iter().zip(other_obj.select_components.iter()).all(|(my_c, other_c)| my_c.is_some() || other_c.is_none());
+
+                    let is_subset = (0..basis_element_count).all(|i| obj.has_component(i) || !other_obj.has_component(i));
                     if !is_subset { return quote! {}; }
 
-                    let is_same_object = obj.select_components.iter().zip(other_obj.select_components.iter()).all(|(my_c, other_c)| my_c.is_some() == other_c.is_some());
+                    let is_same_object = (0..basis_element_count).all(|i| obj.has_component(i) == other_obj.has_component(i));
                     if is_same_object { return quote! {}; }
 
-                    let is_not_empty = obj.select_components.iter().zip(other_obj.select_components.iter()).any(|(my_c, other_c)| my_c.is_some() && other_c.is_some());
+                    let is_not_empty = (0..basis_element_count).any(|i| obj.has_component(i) && other_obj.has_component(i));
                     if !is_not_empty { return quote! {}; }
 
                     let my_type_name = obj.type_name();
-                    let other_type_name = other_obj.type_name();
                     let my_type_name_colons = obj.type_name_colons();
-                    let output_fields: TokenStream = obj
-                        .select_components
-                        .iter()
-                        .zip(other_obj.select_components.iter())
-                        .zip(basis.iter())
-                        .map(|((my_selected, other_selected), b)| {
-                            if my_selected.is_none() {
-                                return quote! {};
-                            }
-                            let field = coefficient_ident("a", b);
-                            if other_selected.is_some() {
-                                if other_obj.is_scalar {
-                                    quote! { #field: value, }
-                                } else {
-                                    quote! { #field: value.#field, }
-                                }
-                            } else {
-                                quote! { #field: T::default(), }
-                            }
-                        })
-                        .collect();
+                    let other_type_name = other_obj.type_name();
 
-                    quote! {
-                        impl<T: core::default::Default> From<#other_type_name> for #my_type_name {
-                            fn from(value: #other_type_name) -> #my_type_name {
+                    let expressions: Vec<_> = other_obj.select_components(Ident::new("value", Span::call_site()), basis_element_count).iter().map(|select_component| {
+                        match select_component {
+                            Some((symbol, coef)) => SymbolicSumExpr(vec![SymbolicProdExpr(*coef, vec![symbol.clone()])]),
+                            None => Default::default(),
+                        }
+                    }).collect();
+
+                    let return_expr = match obj {
+                        Object::Scalar => {
+                            let expr = &expressions[0];
+                            quote! { #expr }
+                        }
+                        Object::Struct(output_struct_object) => {
+                            let output_fields: TokenStream = output_struct_object
+                                .select_components
+                                .iter()
+                                .zip(expressions.iter())
+                                .map(|(select_component, expr)| {
+                                    if let Some((field, coef)) = select_component {
+                                        let expr = expr.clone() * *coef;
+                                        quote! { #field: #expr, }
+                                    } else {
+                                        return quote! {};
+                                    }
+                                })
+                                .collect();
+                            quote! {
                                 #my_type_name_colons {
                                     #output_fields
                                 }
                             }
                         }
+                    };
+
+                    quote! {
+                        impl<T: core::default::Default> From<#other_type_name> for #my_type_name {
+                            fn from(value: #other_type_name) -> #my_type_name {
+                                #return_expr
+                            }
+                        }
                     }
                 }).collect()
             };
+
+            let obj_self_components = &obj.select_components(Ident::new("self", Span::call_site()), basis_element_count);
 
             // Overload unary -
             let op_trait = quote! { core::ops::Neg };
@@ -1272,7 +1275,7 @@ fn implement_geometric_algebra(
                 op_trait,
                 op_fn,
                 &obj,
-                &generate_symbolic_rearrangement(&obj.select_components, |coef: isize, i: usize| (-coef, i)),
+                &generate_symbolic_rearrangement(&obj_self_components, |coef: isize, i: usize| (-coef, i)),
                 None,
             );
 
@@ -1283,7 +1286,7 @@ fn implement_geometric_algebra(
                     let coef_rev = sign_from_parity((basis[i].len() / 2) % 2);
                     (coef * coef_rev, i)
                 };
-            let reverse_expressions = generate_symbolic_rearrangement(&obj.select_components, reverse_f);
+            let reverse_expressions = generate_symbolic_rearrangement(&obj_self_components, reverse_f);
             let reverse_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &reverse_expressions, None);
 
             // Add a method A.anti_reverse()
@@ -1295,19 +1298,19 @@ fn implement_geometric_algebra(
                     let (coef, i) = left_complement(&right_complement_signs, coef, i);
                     (coef, i)
                 };
-            let anti_reverse_expressions = generate_symbolic_rearrangement(&obj.select_components, anti_reverse_f);
+            let anti_reverse_expressions = generate_symbolic_rearrangement(&obj_self_components, anti_reverse_f);
             let anti_reverse_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &anti_reverse_expressions, None);
 
             // Add a method A.right_complement()
             let op_trait = quote! { RightComplement };
             let op_fn = Ident::new("right_complement", Span::call_site());
-            let right_complement_expressions = generate_symbolic_rearrangement(&obj.select_components, |coef: isize, i: usize| right_complement(&right_complement_signs, coef, i));
+            let right_complement_expressions = generate_symbolic_rearrangement(&obj_self_components, |coef: isize, i: usize| right_complement(&right_complement_signs, coef, i));
             let right_complement_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &right_complement_expressions, None);
 
             // Add a method A.left_complement()
             let op_trait = quote! { LeftComplement };
             let op_fn = Ident::new("left_complement", Span::call_site());
-            let left_complement_expressions = generate_symbolic_rearrangement(&obj.select_components, |coef: isize, i: usize| left_complement(&right_complement_signs, coef, i));
+            let left_complement_expressions = generate_symbolic_rearrangement(&obj_self_components, |coef: isize, i: usize| left_complement(&right_complement_signs, coef, i));
             let left_complement_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &left_complement_expressions, None);
 
             // Add a method A.bulk()
@@ -1316,9 +1319,10 @@ fn implement_geometric_algebra(
             let bulk_f = |coef: isize, i: usize| {
                 // This would need to be changed for CGA where the dot product multiplication table
                 // is not diagonal
-                (coef * dot_product_multiplication_table[i][i], i)
+                let (zero_or_one, _) = dot_product_f(1, i, 1, i);
+                (coef * zero_or_one, i)
             };
-            let bulk_expressions = generate_symbolic_rearrangement(&obj.select_components, bulk_f);
+            let bulk_expressions = generate_symbolic_rearrangement(&obj_self_components, bulk_f);
             let bulk_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &bulk_expressions, None);
 
             // Add a method A.weight()
@@ -1330,7 +1334,7 @@ fn implement_geometric_algebra(
                 let (coef, i) = left_complement(&right_complement_signs, coef, i);
                 (coef, i)
             };
-            let weight_expressions = generate_symbolic_rearrangement(&obj.select_components, weight_f);
+            let weight_expressions = generate_symbolic_rearrangement(&obj_self_components, weight_f);
             let weight_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &weight_expressions, None);
 
             // Add a method A.bulk_dual() which computes A★
@@ -1341,7 +1345,7 @@ fn implement_geometric_algebra(
                 let (coef, i) = right_complement(&right_complement_signs, coef, i);
                 (coef, i)
             };
-            let bulk_dual_expressions = generate_symbolic_rearrangement(&obj.select_components, bulk_dual_f);
+            let bulk_dual_expressions = generate_symbolic_rearrangement(&obj_self_components, bulk_dual_f);
             let bulk_dual_code =
                 gen_unary_operator(&objects, op_trait, op_fn, &obj, &bulk_dual_expressions, None);
 
@@ -1355,29 +1359,26 @@ fn implement_geometric_algebra(
                 let (coef, i) = right_complement(&right_complement_signs, coef, i);
                 (coef, i)
             };
-            let weight_dual_expressions = generate_symbolic_rearrangement(&obj.select_components, weight_dual_f);
+            let weight_dual_expressions = generate_symbolic_rearrangement(&obj_self_components, weight_dual_f);
             let weight_dual_code =
                 gen_unary_operator(&objects, op_trait, op_fn, &obj, &weight_dual_expressions, Some((alias_trait, alias_fn)));
 
-            // CUT HERE //
-/*
 
             // Add a method A.bulk_norm_squared()
             let op_trait = quote! { BulkNormSquared };
             let op_fn = Ident::new("bulk_norm_squared", Span::call_site());
             // Squared norm uses the product A • A
-            let bulk_norm_product_f = |i: usize, j: usize| (dot_product_multiplication_table[i][j], 0);
 
-            let bulk_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, false);
+            let bulk_norm_squared_expressions = generate_symbolic_norm(&obj_self_components, dot_product_f, false);
             let bulk_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_norm_squared_expressions, None);
+                gen_unary_operator(&objects, op_trait, op_fn, &obj, &bulk_norm_squared_expressions, None);
 
             let bulk_norm_code = if !bulk_norm_squared_code.is_empty() {
                 // Add a method A.bulk_norm() if it is possible to symbolically take the sqrt
                 let op_trait = quote! { BulkNorm };
                 let op_fn = Ident::new("bulk_norm", Span::call_site());
-                let bulk_norm_expressions = generate_symbolic_norm(&basis, &obj.select_components, bulk_norm_product_f, true);
-                let bulk_norm_code = gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &bulk_norm_expressions, None);
+                let bulk_norm_expressions = generate_symbolic_norm(&obj_self_components, dot_product_f, true);
+                let bulk_norm_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &bulk_norm_expressions, None);
                 if !bulk_norm_code.is_empty() {
                     // We found a way to symbolically take the sqrt
                     bulk_norm_code
@@ -1401,25 +1402,18 @@ fn implement_geometric_algebra(
 
             let op_trait = quote! { WeightNormSquared };
             let op_fn = Ident::new("weight_norm_squared", Span::call_site());
-            let weight_norm_product_f = |i: usize, j: usize| {
-                let (coef_i, i) = right_complement(&right_complement_signs, i);
-                let (coef_j, j) = right_complement(&right_complement_signs, j);
-                let (coef_prod, ix) = bulk_norm_product_f(i, j);
-                let (coef_complement, ix) = left_complement(&right_complement_signs, ix);
-                (coef_i * coef_j * coef_prod * coef_complement, ix)
-            };
-            let weight_norm_squared_expressions = generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, false);
+            let weight_norm_squared_expressions = generate_symbolic_norm(&obj_self_components, anti_dot_product_f, false);
 
             let weight_norm_squared_code =
-                gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_norm_squared_expressions, None);
+                gen_unary_operator(&objects, op_trait, op_fn, &obj, &weight_norm_squared_expressions, None);
 
             let weight_norm_code = if !weight_norm_squared_code.is_empty() {
                 // Add a method A.weight_norm() if it is possible to symbolically take the sqrt
                 let op_trait = quote! { WeightNorm };
                 let op_fn = Ident::new("weight_norm", Span::call_site());
-                let weight_norm_expressions = generate_symbolic_norm(&basis, &obj.select_components, weight_norm_product_f, true);
+                let weight_norm_expressions = generate_symbolic_norm(&obj_self_components, anti_dot_product_f, true);
                 let weight_norm_code =
-                    gen_unary_operator(&basis, &objects, op_trait, op_fn, &obj, &weight_norm_expressions, None);
+                    gen_unary_operator(&objects, op_trait, op_fn, &obj, &weight_norm_expressions, None);
                 if !weight_norm_code.is_empty() {
                     // We found a way to symbolically take the sqrt
                     weight_norm_code
@@ -1538,7 +1532,7 @@ fn implement_geometric_algebra(
             // where the bulk norm has been made to equal to 1
             // Also implement .unitized() which returns a scaled copy of the object
             // where the weight norm has been made to 𝟙
-            let hat_code = if !obj.is_scalar {
+            let hat_code = if !matches!(obj, Object::Scalar) {
                 let type_name = obj.type_name();
                 quote! {
                     impl<T: Ring + Recip<Output=T>> Normalized for #type_name
@@ -1553,7 +1547,8 @@ fn implement_geometric_algebra(
 
                     impl<T: Ring + Recip<Output=T>> Unitized for #type_name
                     where
-                        Self: WeightNorm<Output=AntiScalar<T>>
+                        Self: WeightNorm<Output=AntiScalar<T>> // TODO: Figure out anti-scalar
+                                                               // handling
                     {
                         type Output = Self;
                         fn unitized(self) -> Self {
@@ -1569,12 +1564,12 @@ fn implement_geometric_algebra(
             let op_trait = quote! { core::ops::Add };
             let op_fn = Ident::new("add", Span::call_site());
             let add_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_sum(&basis, a, b, 1, 1),
+                |a, b| generate_symbolic_sum(a, b, 1, 1),
                 true,  // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1583,12 +1578,12 @@ fn implement_geometric_algebra(
             let op_trait = quote! { core::ops::Sub };
             let op_fn = Ident::new("sub", Span::call_site());
             let sub_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_sum(&basis, a, b, 1, -1),
+                |a, b| generate_symbolic_sum(a, b, 1, -1),
                 true,  // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1598,8 +1593,8 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("wedge", Span::call_site());
             let alias_trait = quote! { Join };
             let alias_fn = Ident::new("join", Span::call_site());
-            let wedge_product_f = |i: usize, j: usize| {
-                let (coef, ix) = geometric_product_multiplication_table[i][j];
+            let wedge_product_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef, ix) = geometric_product_f(coef_i, i, coef_j, j);
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
@@ -1608,12 +1603,12 @@ fn implement_geometric_algebra(
                 (coef, ix)
             };
             let wedge_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, wedge_product_f),
+                |a, b| generate_symbolic_product(a, b, wedge_product_f),
                 false, // implicit_promotion_to_compound
                 Some((alias_trait, alias_fn)), // alias
             );
@@ -1623,28 +1618,27 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("anti_wedge", Span::call_site());
             let alias_trait = quote! { Meet };
             let alias_fn = Ident::new("meet", Span::call_site());
-            let anti_wedge_product_f = |i: usize, j: usize| {
+            let anti_wedge_product_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_i, i) = right_complement(&right_complement_signs, coef_i, i);
+                let (coef_j, j) = right_complement(&right_complement_signs, coef_j, j);
 
-                let (i_coef, i) = right_complement(&right_complement_signs, i);
-                let (j_coef, j) = right_complement(&right_complement_signs, j);
-
-                let (prod_coef, ix) = geometric_product_multiplication_table[i][j];
+                let (coef, ix) = geometric_product_f(coef_i, i, coef_j, j);
                 // Select grade s + t
                 let s = basis[i].len();
                 let t = basis[j].len();
                 let u = basis[ix].len();
-                let prod_coef = if s + t == u { prod_coef } else { 0 };
+                let coef = if s + t == u { coef } else { 0 };
 
-                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
-                (i_coef * j_coef * prod_coef * complement_coef, ix)
+                let (coef, ix) = left_complement(&right_complement_signs, coef, ix);
+                (coef, ix)
             };
             let anti_wedge_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_product_f),
+                |a, b| generate_symbolic_product(a, b, anti_wedge_product_f),
                 false, // implicit_promotion_to_compound
                 Some((alias_trait, alias_fn)), // alias
             );
@@ -1652,15 +1646,14 @@ fn implement_geometric_algebra(
             // Add a method A.dot(B) which computes A • B
             let op_trait = quote! { Dot };
             let op_fn = Ident::new("dot", Span::call_site());
-            let dot_product = |i: usize, j: usize| (dot_product_multiplication_table[i][j], 0);
 
             let dot_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, dot_product),
+                |a, b| generate_symbolic_product(a, b, dot_product_f),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1668,23 +1661,14 @@ fn implement_geometric_algebra(
             // Add a method A.anti_dot(B) which computes A ∘ B
             let op_trait = quote! { AntiDot };
             let op_fn = Ident::new("anti_dot", Span::call_site());
-            let anti_dot_product = |i: usize, j: usize| {
-                let (i_coef, i) = right_complement(&right_complement_signs, i);
-                let (j_coef, j) = right_complement(&right_complement_signs, j);
-
-                let (prod_coef, ix) = dot_product(i, j);
-
-                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
-                (i_coef * j_coef * prod_coef * complement_coef, ix)
-            };
 
             let anti_dot_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_dot_product),
+                |a, b| generate_symbolic_product(a, b, anti_dot_product_f),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1694,12 +1678,12 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("wedge_dot", Span::call_site());
 
             let wedge_dot_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, |i: usize, j: usize| geometric_product_multiplication_table[i][j]),
+                |a, b| generate_symbolic_product(a, b, geometric_product_f),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1709,15 +1693,14 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("anti_wedge_dot", Span::call_site());
             let alias_trait = quote! { Compose };
             let alias_fn = Ident::new("compose", Span::call_site());
-            let anti_wedge_dot_product = |i: usize, j: usize| geometric_anti_product_multiplication_table[i][j];
 
             let anti_wedge_dot_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_wedge_dot_product),
+                |a, b| generate_symbolic_product(a, b, geometric_antiproduct_f),
                 false, // implicit_promotion_to_compound
                 Some((alias_trait, alias_fn)), // alias
             );
@@ -1725,8 +1708,8 @@ fn implement_geometric_algebra(
             // Overload * for scalar multiplication
             let op_trait = quote! { core::ops::Mul };
             let op_fn = Ident::new("mul", Span::call_site());
-            let scalar_product = |i: usize, j: usize| {
-                let (coef, ix) = geometric_product_multiplication_table[i][j];
+            let scalar_product = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef, ix) = geometric_product_f(coef_i, i, coef_j, j);
                 // Require s or t be a scalar
                 let s = basis[i].len();
                 let t = basis[j].len();
@@ -1734,12 +1717,12 @@ fn implement_geometric_algebra(
                 (coef, ix)
             };
             let scalar_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, scalar_product),
+                |a, b| generate_symbolic_product(a, b, scalar_product),
                 true, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1747,22 +1730,22 @@ fn implement_geometric_algebra(
             // Implement A.anti_mul(B) for anti-scalar multiplication
             let op_trait = quote! { AntiMul };
             let op_fn = Ident::new("anti_mul", Span::call_site());
-            let anti_scalar_f = |i: usize, j: usize| {
-                let (i_coef, i) = right_complement(&right_complement_signs, i);
-                let (j_coef, j) = right_complement(&right_complement_signs, j);
+            let anti_scalar_f = |coef_i: isize, i: usize, coef_j: isize, j: usize|  {
+                let (coef_i, i) = right_complement(&right_complement_signs, coef_i, i);
+                let (coef_j, j) = right_complement(&right_complement_signs, coef_j, j);
 
-                let (prod_coef, ix) = scalar_product(i, j);
+                let (coef, ix) = scalar_product(coef_i, i, coef_j, j);
 
-                let (complement_coef, ix) = left_complement(&right_complement_signs, ix);
-                (i_coef * j_coef * prod_coef * complement_coef, ix)
+                let (coef, ix) = left_complement(&right_complement_signs, coef, ix);
+                (coef, ix)
             };
             let anti_scalar_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, anti_scalar_f),
+                |a, b| generate_symbolic_product(a, b, anti_scalar_f),
                 true, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1770,18 +1753,18 @@ fn implement_geometric_algebra(
             // Add a method A.bulk_expansion(B) which computes A ∧ B★
             let op_trait = quote! { BulkExpansion };
             let op_fn = Ident::new("bulk_expansion", Span::call_site());
-            let bulk_expansion_f = |i: usize, j: usize| {
-                let (coef_dual, j) = bulk_dual_f(j);
-                let (coef_prod, ix) = wedge_product_f(i, j);
-                (coef_dual * coef_prod, ix)
+            let bulk_expansion_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_j, j) = bulk_dual_f(coef_j, j);
+                let (coef, ix) = wedge_product_f(coef_i, i, coef_j, j);
+                (coef, ix)
             };
             let bulk_expansion_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, bulk_expansion_f),
+                |a, b| generate_symbolic_product(a, b, bulk_expansion_f),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1791,18 +1774,18 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("weight_expansion", Span::call_site());
             let alias_trait = quote! { SupersetOrthogonalTo };
             let alias_fn = Ident::new("superset_orthogonal_to", Span::call_site());
-            let weight_expansion_f = |i: usize, j: usize| {
-                let (coef_dual, j) = weight_dual_f(j);
-                let (coef_prod, ix) = wedge_product_f(i, j);
-                (coef_dual * coef_prod, ix)
+            let weight_expansion_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_j, j) = weight_dual_f(coef_j, j);
+                let (coef, ix) = wedge_product_f(coef_i, i, coef_j, j);
+                (coef, ix)
             };
             let weight_expansion_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, weight_expansion_f),
+                |a, b| generate_symbolic_product(a, b, weight_expansion_f),
                 false, // implicit_promotion_to_compound
                 Some((alias_trait, alias_fn)), // alias
             );
@@ -1810,18 +1793,18 @@ fn implement_geometric_algebra(
             // Add a method A.bulk_contraction(B) which computes A ∨ B★
             let op_trait = quote! { BulkContraction };
             let op_fn = Ident::new("bulk_contraction", Span::call_site());
-            let bulk_contraction_f = |i: usize, j: usize| {
-                let (coef_dual, j) = bulk_dual_f(j);
-                let (coef_prod, ix) = anti_wedge_product_f(i, j);
-                (coef_dual * coef_prod, ix)
+            let bulk_contraction_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_j, j) = bulk_dual_f(coef_j, j);
+                let (coef, ix) = anti_wedge_product_f(coef_i, i, coef_j, j);
+                (coef, ix)
             };
             let bulk_contraction_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, bulk_contraction_f),
+                |a, b| generate_symbolic_product(a, b, bulk_contraction_f),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1831,18 +1814,18 @@ fn implement_geometric_algebra(
             let op_fn = Ident::new("weight_contraction", Span::call_site());
             let alias_trait = quote! { SubsetOrthogonalTo };
             let alias_fn = Ident::new("subset_orthogonal_to", Span::call_site());
-            let weight_contraction_f = |i: usize, j: usize| {
-                let (coef_dual, j) = weight_dual_f(j);
-                let (coef_prod, ix) = anti_wedge_product_f(i, j);
-                (coef_dual * coef_prod, ix)
+            let weight_contraction_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_j, j) = weight_dual_f(coef_j, j);
+                let (coef, ix) = anti_wedge_product_f(coef_i, i, coef_j, j);
+                (coef, ix)
             };
             let weight_contraction_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, weight_contraction_f),
+                |a, b| generate_symbolic_product(a, b, weight_contraction_f),
                 false, // implicit_promotion_to_compound
                 Some((alias_trait, alias_fn)), // alias
             );
@@ -1850,25 +1833,23 @@ fn implement_geometric_algebra(
             // Add a method A.anti_commutator(B) which computes (A ⟇ B - B ⟇ A) / 2
             let op_trait = quote! { AntiCommutator };
             let op_fn = Ident::new("anti_commutator", Span::call_site());
-            let commutator_product = |i: usize, j: usize| {
-                let (coef_1, ix) = geometric_anti_product_multiplication_table[i][j];
-                let (coef_2, ix_2) = geometric_anti_product_multiplication_table[j][i];
+            let commutator_product = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_1, ix) = geometric_antiproduct_f(coef_i, i, coef_j, j);
+                let (coef_2, ix_2) = geometric_antiproduct_f(coef_j, j, coef_i, i);
 
                 let coef = coef_1 - coef_2;
-
                 assert!(ix == ix_2);
                 assert!(coef % 2 == 0);
                 let coef = coef / 2;
-
                 (coef, ix)
             };
             let commutator_product_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, commutator_product),
+                |a, b| generate_symbolic_product(a, b, commutator_product),
                 false, // implicit_promotion_to_compound
                 None, // alias
             );
@@ -1876,32 +1857,28 @@ fn implement_geometric_algebra(
             // Add a method A.transform(B) which computes B̰ ⟇ A ⟇ B
             let op_trait = quote! { Transform };
             let op_fn = Ident::new("transform", Span::call_site());
-            let transform_1 = |i: usize, j: usize| {
+            let transform_1 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute first half of B̰ ⟇ A ⟇ B
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric antiproduct of this intermediate result
                 // with B
 
-                let (coef_rev, i) = anti_reverse_f(i);
-                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
-                (coef_rev * coef_prod, ix_result)
+                let (coef_i, i) = anti_reverse_f(coef_i, i);
+                geometric_antiproduct_f(coef_i, i, coef_j, j)
             };
-            let transform_2 = |i: usize, j: usize| {
-                // Compute second half of B̰ ⟇ A ⟇ B
-                // In part 1, we computed the intermediate result B̰ ⟇ A which maps to i here.
-                // j maps to B.
+            // Compute second half of B̰ ⟇ A ⟇ B
+            // In part 1, we computed the intermediate result B̰ ⟇ A which maps to i here.
+            // j maps to B.
+            let transform_2 = geometric_antiproduct_f;
 
-                geometric_anti_product_multiplication_table[i][j]
-            };
             let transform_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         transform_1,
@@ -1915,32 +1892,27 @@ fn implement_geometric_algebra(
             // Add a method A.reverse_transform(B) which computes B ⟇ A ⟇ B̰
             let op_trait = quote! { ReverseTransform };
             let op_fn = Ident::new("reverse_transform", Span::call_site());
-            let reverse_transform_1 = |i: usize, j: usize| {
-                // Compute first half of B ⟇ A ⟇ B̰
-                // Where i maps to B, and j maps to A.
-                // In part 2, we will compute the geometric antiproduct of this intermediate result
-                // with B̰
-
-                geometric_anti_product_multiplication_table[i][j]
-            };
-            let reverse_transform_2 = |i: usize, j: usize| {
+            // Compute first half of B ⟇ A ⟇ B̰
+            // Where i maps to B, and j maps to A.
+            // In part 2, we will compute the geometric antiproduct of this intermediate result
+            // with B̰
+            let reverse_transform_1 = geometric_antiproduct_f;
+            let reverse_transform_2 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ⟇ A ⟇ B̰
                 // In part 1, we computed the intermediate result B ⟇ A which maps to i here.
                 // j maps to B.
 
-                let (coef_rev, j) = anti_reverse_f(j);
-                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
-                (coef_rev * coef_prod, ix_result)
+                let (coef_j, j) = anti_reverse_f(coef_j, j);
+                geometric_antiproduct_f(coef_i, i, coef_j, j)
             };
             let reverse_transform_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         reverse_transform_1,
@@ -1954,27 +1926,26 @@ fn implement_geometric_algebra(
             // Implement A.projection(B) which computes B ∨ (A ∧  B☆)
             let op_trait = quote! { Projection };
             let op_fn = Ident::new("projection", Span::call_site());
-            let projection_product_1 = |i: usize, j: usize| {
+            let projection_product_1 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∨ (A ∧ B☆)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                weight_expansion_f(j, i)
+                weight_expansion_f(coef_j, j, coef_i, i)
             };
-            let projection_product_2 = |i: usize, j: usize| {
+            let projection_product_2 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∨ (A ∧ B☆)
                 // In part 1, we computed the intermediate result A ∧ B☆ which maps to i here.
                 // j maps to B.
-                anti_wedge_product_f(j, i)
+                anti_wedge_product_f(coef_j, j, coef_i, i)
             };
             let projection_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         projection_product_1,
@@ -1988,27 +1959,26 @@ fn implement_geometric_algebra(
             // Implement A.anti_projection(B) which computes B ∧ (A ∨ B☆)
             let op_trait = quote! { AntiProjection };
             let op_fn = Ident::new("anti_projection", Span::call_site());
-            let anti_projection_product_1 = |i: usize, j: usize| {
+            let anti_projection_product_1 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∧ (A ∨ B☆)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                weight_contraction_f(j, i)
+                weight_contraction_f(coef_j, j, coef_i, i)
             };
-            let anti_projection_product_2 = |i: usize, j: usize| {
+            let anti_projection_product_2 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∧ (A ∨ B☆)
                 // In part 1, we computed the intermediate result A ∨ B☆ which maps to i here.
                 // j maps to B.
-                wedge_product_f(j, i)
+                wedge_product_f(coef_j, j, coef_i, i)
             };
             let anti_projection_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         anti_projection_product_1,
@@ -2022,27 +1992,26 @@ fn implement_geometric_algebra(
             // Implement A.central_projection(B) which computes B ∨ (A ∧ B★)
             let op_trait = quote! { CentralProjection };
             let op_fn = Ident::new("central_projection", Span::call_site());
-            let central_projection_product_1 = |i: usize, j: usize| {
+            let central_projection_product_1 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∨ (A ∧ B★)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                bulk_expansion_f(j, i)
+                bulk_expansion_f(coef_j, j, coef_i, i)
             };
-            let central_projection_product_2 = |i: usize, j: usize| {
+            let central_projection_product_2 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∨ (A ∧ B★)
                 // In part 1, we computed the intermediate result A ∧ B★ which maps to i here.
                 // j maps to B.
-                anti_wedge_product_f(j, i)
+                anti_wedge_product_f(coef_j, j, coef_i, i)
             };
             let central_projection_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         central_projection_product_1,
@@ -2056,27 +2025,26 @@ fn implement_geometric_algebra(
             // Implement A.central_anti_projection(B) which computes B ∧ (A ∨ B★)
             let op_trait = quote! { CentralAntiProjection };
             let op_fn = Ident::new("central_anti_projection", Span::call_site());
-            let central_anti_projection_product_1 = |i: usize, j: usize| {
+            let central_anti_projection_product_1 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∧ (A ∨ B★)
                 // Where i maps to B, and j maps to A.
                 // In part 2, we will compute the geometric product of B with this intermediate result
-                bulk_contraction_f(j, i)
+                bulk_contraction_f(coef_j, j, coef_i, i)
             };
-            let central_anti_projection_product_2 = |i: usize, j: usize| {
+            let central_anti_projection_product_2 = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
                 // Compute second half of B ∧ (A ∨ B★)
                 // In part 1, we computed the intermediate result A ∨ B★ which maps to i here.
                 // j maps to B.
-                wedge_product_f(j, i)
+                wedge_product_f(coef_j, j, coef_i, i)
             };
             let central_anti_projection_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
                 |a, b| {
                     generate_symbolic_double_product(
-                        &basis,
                         a,
                         b,
                         central_anti_projection_product_1,
@@ -2090,24 +2058,21 @@ fn implement_geometric_algebra(
             // Implement motor_to which computes A̰ ⟇ B
             let op_trait = quote! { MotorTo };
             let op_fn = Ident::new("motor_to", Span::call_site());
-            let motor_to_f = |i: usize, j: usize| {
-                let (coef_rev, i) = anti_reverse_f(i);
-                let (coef_prod, ix_result) = geometric_anti_product_multiplication_table[i][j];
-                (coef_rev * coef_prod, ix_result)
+            let motor_to_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
+                let (coef_i, i) = anti_reverse_f(coef_i, i);
+                geometric_antiproduct_f(coef_i, i, coef_j, j)
             };
 
             let motor_to_code = gen_binary_operator(
-                &basis,
+                basis_element_count,
                 &objects,
                 op_trait,
                 op_fn,
                 &obj,
-                |a, b| generate_symbolic_product(&basis, a, b, motor_to_f),
+                |a, b| generate_symbolic_product(a, b, motor_to_f),
                 true, // implicit_promotion_to_compound
                 None, // alias
             );
-
-            */
 
             quote! {
                 // ===========================================================================
@@ -2124,39 +2089,41 @@ fn implement_geometric_algebra(
                 #weight_dual_code
                 #right_complement_code
                 #left_complement_code
-                //#bulk_norm_squared_code
-                //#bulk_norm_code
-                //#weight_norm_squared_code
-                //#weight_norm_code
-                //#hat_code
-                //#add_code
-                //#sub_code
-                //#wedge_product_code
-                //#anti_wedge_product_code
-                //#dot_product_code
-                //#anti_dot_product_code
-                //#wedge_dot_product_code
-                //#anti_wedge_dot_product_code
-                //#scalar_product_code
-                //#anti_scalar_product_code
-                //#commutator_product_code
-                //#bulk_expansion_code
-                //#weight_expansion_code
-                //#bulk_contraction_code
-                //#weight_contraction_code
-                //#projection_code
-                //#anti_projection_code
-                //#central_projection_code
-                //#central_anti_projection_code
-                //#transform_code
-                //#reverse_transform_code
-                //#motor_to_code
+                #bulk_norm_squared_code
+                #bulk_norm_code
+                #weight_norm_squared_code
+                #weight_norm_code
+                #hat_code
+                #add_code
+                #sub_code
+                #wedge_product_code
+                #anti_wedge_product_code
+                #dot_product_code
+                #anti_dot_product_code
+                #wedge_dot_product_code
+                #anti_wedge_dot_product_code
+                #scalar_product_code
+                #anti_scalar_product_code
+                #commutator_product_code
+                #bulk_expansion_code
+                #weight_expansion_code
+                #bulk_contraction_code
+                #weight_contraction_code
+                #projection_code
+                #anti_projection_code
+                #central_projection_code
+                #central_anti_projection_code
+                #transform_code
+                #reverse_transform_code
+                #motor_to_code
             }
         })
         .collect();
 
-    // TODO: anti_scalar_ops
-    Ok(impl_code)
+    Ok(quote! {
+        #anti_scalar_ops
+        #impl_code
+    })
 }
 
 #[derive(Debug)]
@@ -2348,29 +2315,61 @@ mod tests {
 
     #[test]
     fn derive_geometric_algebra() {
-        let result = geometric_algebra2(
+        let _result = geometric_algebra2(
             parse2(quote! {
-                basis: [w, x, y, z],
-                metric: [0, 1, 1, 1],
+                basis: [w, x, y],
+                metric: [0, 1, 1],
             })
             .unwrap(),
             parse2(quote! {
                 mod pga2d {
                     #[multivector]
-                    #[derive(Clone, Copy, Default, Debug, PartialEq)]
                     struct Vector<T> {
                         x: T,
                         y: T,
-                        z: T,
                         w: T,
-                        s: T,
+                    }
+                    #[multivector]
+                    struct Bivector<T> {
+                        wx: T,
+                        wy: T,
+                        xy: T,
+                    }
+                    #[multivector]
+                    struct AntiScalar<T> {
+                        wxy: T,
+                    }
+                    #[multivector]
+                    struct AntiEven<T> {
+                        a: T,
+                        wx: T,
+                        wy: T,
+                        xy: T,
+                    }
+                    #[multivector]
+                    struct AntiOdd<T> {
+                        x: T,
+                        y: T,
+                        w: T,
+                        wxy: T,
+                    }
+                    #[multivector]
+                    struct Multivector<T> {
+                        a: T,
+                        x: T,
+                        y: T,
+                        w: T,
+                        wx: T,
+                        wy: T,
+                        xy: T,
+                        wxy: T,
                     }
                 }
             })
             .unwrap(),
         )
         .unwrap();
-        println!("{}", result);
-        panic!();
+        //println!("{}", result);
+        //panic!();
     }
 }

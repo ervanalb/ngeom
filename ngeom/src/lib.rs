@@ -14,9 +14,9 @@
 //! ngeom is `no_std`-compatible, with most functionality available,
 //! and the option to implement the rest.
 //!
-//! ngeom ships with modules for [2D](pga2d) and [3D](pga3d) Euclidean space.
+//! ngeom ships with modules for rigid Euclidean [2D](pga2d) and [3D](pga3d) geometry.
 //! Modules for spaces with different dimensionality or metric can be written with the help of
-//! auto-generated operations implementations from the [provided macro](ngeom_macros::gen_algebra).
+//! auto-generated operations implementations from the [provided macro](ngeom_macros::geometric_algebra).
 //! With some effort, usage code can be written to be generic
 //! over the dimensionality or even the metric of the space.
 //!
@@ -24,6 +24,8 @@
 //! Understanding geometric algebra is helpful but optional,
 //! as the functions are named for their geometric interpretation.
 //! Lower-level functions named after their [geometric algebra expressions](algebraic_ops) are available if needed.
+
+use ngeom_macros::geometric_algebra;
 
 /// Traits that govern the scalar data type used by ngeom
 ///
@@ -1157,17 +1159,70 @@ pub mod ops {
 }
 
 /// Projective geometry for 2D Euclidean space
+
+#[geometric_algebra(basis: [w, x, y], metric: [0, 1, 1])]
 pub mod pga2d {
     use crate::algebraic_ops::*;
     use crate::ops::*;
     use crate::scalar::*;
-    use ngeom_macros::gen_algebra;
 
-    gen_algebra!(0, 1, 1);
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Vector<T> {
+        pub x: T,
+        pub y: T,
+        pub w: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Bivector<T> {
+        pub wx: T,
+        pub wy: T,
+        pub xy: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct AntiScalar<T> {
+        pub wxy: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Magnitude<T> {
+        pub a: T,
+        pub wxy: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct AntiEven<T> {
+        pub x: T,
+        pub y: T,
+        pub w: T,
+        pub wxy: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct AntiOdd<T> {
+        pub a: T,
+        pub wx: T,
+        pub wy: T,
+        pub xy: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Multivector<T> {
+        pub a: T,
+        pub x: T,
+        pub y: T,
+        pub w: T,
+        pub wx: T,
+        pub wy: T,
+        pub xy: T,
+        pub wxy: T,
+    }
 
     impl<T> From<T> for AntiScalar<T> {
         fn from(value: T) -> AntiScalar<T> {
-            AntiScalar { a012: value }
+            AntiScalar { wxy: value }
         }
     }
 
@@ -1176,7 +1231,7 @@ pub mod pga2d {
         ($type:ident) => {
             impl From<AntiScalar<$type>> for $type {
                 fn from(value: AntiScalar<$type>) -> $type {
-                    value.a012
+                    value.wxy
                 }
             }
         };
@@ -1206,9 +1261,9 @@ pub mod pga2d {
     impl<T: Ring> Origin for Vector<T> {
         fn origin() -> Vector<T> {
             Vector {
-                a0: T::one(),
-                a1: T::zero(),
-                a2: T::zero(),
+                x: T::zero(),
+                y: T::zero(),
+                w: T::one(),
             }
         }
     }
@@ -1216,9 +1271,9 @@ pub mod pga2d {
     impl<T: Ring> XHat for Vector<T> {
         fn x_hat() -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: T::one(),
-                a2: T::zero(),
+                x: T::one(),
+                y: T::zero(),
+                w: T::zero(),
             }
         }
     }
@@ -1226,51 +1281,34 @@ pub mod pga2d {
     impl<T: Ring> YHat for Vector<T> {
         fn y_hat() -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: T::zero(),
-                a2: T::one(),
+                x: T::zero(),
+                y: T::one(),
+                w: T::zero(),
             }
         }
     }
 
     impl<T: Ring> IdentityMotor for AntiScalar<T> {
         fn identity_motor() -> AntiScalar<T> {
-            AntiScalar { a012: T::one() }
+            AntiScalar { wxy: T::one() }
         }
     }
 
     impl<T: Ring> IdentityMotor for AntiEven<T> {
         fn identity_motor() -> AntiEven<T> {
-            AntiScalar { a012: T::one() }.into()
+            AntiScalar { wxy: T::one() }.into()
         }
     }
 
     impl<T: Ring> Point<[T; 2]> for Vector<T> {
         fn point([x, y]: [T; 2]) -> Vector<T> {
-            Vector {
-                a0: T::one(),
-                a1: x,
-                a2: y,
-            }
+            Vector { x, y, w: T::one() }
         }
     }
 
     impl<T: Ring> IdealPoint<[T; 2]> for Vector<T> {
         fn ideal_point([x, y]: [T; 2]) -> Vector<T> {
-            Vector {
-                a0: T::zero(),
-                a1: x,
-                a2: y,
-            }
-        }
-    }
-
-    /// Line with equation ax + by - c = 0
-    pub fn line<T>(a: T, b: T, c: T) -> Bivector<T> {
-        Bivector {
-            a12: c,
-            a20: a,
-            a01: b,
+            Vector { x, y, w: T::zero() }
         }
     }
 
@@ -1296,17 +1334,97 @@ pub mod pga2d {
 }
 
 /// Projective geometry for 3D Euclidean space
+#[geometric_algebra(basis: [w, x, y, z], metric: [0, 1, 1, 1])]
 pub mod pga3d {
     use crate::algebraic_ops::*;
     use crate::ops::*;
     use crate::scalar::*;
-    use ngeom_macros::gen_algebra;
 
-    gen_algebra!(0, 1, 1, 1);
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Vector<T> {
+        pub x: T,
+        pub y: T,
+        pub z: T,
+        pub w: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Bivector<T> {
+        pub wx: T,
+        pub wy: T,
+        pub wz: T,
+        pub xy: T,
+        pub yz: T,
+        pub zx: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Trivector<T> {
+        pub xyz: T,
+        pub wxy: T,
+        pub wzx: T,
+        pub wyz: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct AntiScalar<T> {
+        pub wxyz: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Magnitude<T> {
+        pub a: T,
+        pub wxyz: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct AntiEven<T> {
+        pub a: T,
+        pub wx: T,
+        pub wy: T,
+        pub wz: T,
+        pub xy: T,
+        pub yz: T,
+        pub zx: T,
+        pub wxyz: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct AntiOdd<T> {
+        pub x: T,
+        pub y: T,
+        pub z: T,
+        pub w: T,
+        pub xyz: T,
+        pub wxy: T,
+        pub wzx: T,
+        pub wyz: T,
+    }
+    #[multivector]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct Multivector<T> {
+        pub a: T,
+        pub x: T,
+        pub y: T,
+        pub z: T,
+        pub w: T,
+        pub wx: T,
+        pub wy: T,
+        pub wz: T,
+        pub xy: T,
+        pub yz: T,
+        pub zx: T,
+        pub xyz: T,
+        pub wxy: T,
+        pub wzx: T,
+        pub wyz: T,
+        pub wxyz: T,
+    }
 
     impl<T: Ring> From<T> for AntiScalar<T> {
         fn from(value: T) -> AntiScalar<T> {
-            AntiScalar { a0123: value }
+            AntiScalar { wxyz: value }
         }
     }
 
@@ -1315,7 +1433,7 @@ pub mod pga3d {
         ($type:ident) => {
             impl From<AntiScalar<$type>> for $type {
                 fn from(value: AntiScalar<$type>) -> $type {
-                    value.a0123
+                    value.wxyz
                 }
             }
         };
@@ -1343,12 +1461,12 @@ pub mod pga3d {
 
     impl<T: Ring + Sqrt + Recip<Output = T>> Magnitude<T> {
         pub fn rsqrt(self) -> Magnitude<T> {
-            let Magnitude { a: s, a0123: p } = self;
+            let Magnitude { a: s, wxyz: p } = self;
             let sqrt_s = s.sqrt();
             let sqrt_s_cubed = s * sqrt_s;
             Magnitude {
                 a: sqrt_s.recip(),
-                a0123: p * (sqrt_s_cubed + sqrt_s_cubed).recip(),
+                wxyz: p * (sqrt_s_cubed + sqrt_s_cubed).recip(),
             }
         }
     }
@@ -1356,10 +1474,10 @@ pub mod pga3d {
     impl<T: Ring> Origin for Vector<T> {
         fn origin() -> Vector<T> {
             Vector {
-                a0: T::one(),
-                a1: T::zero(),
-                a2: T::zero(),
-                a3: T::zero(),
+                x: T::zero(),
+                y: T::zero(),
+                z: T::zero(),
+                w: T::one(),
             }
         }
     }
@@ -1367,10 +1485,10 @@ pub mod pga3d {
     impl<T: Ring> XHat for Vector<T> {
         fn x_hat() -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: T::one(),
-                a2: T::zero(),
-                a3: T::zero(),
+                x: T::one(),
+                y: T::zero(),
+                z: T::zero(),
+                w: T::zero(),
             }
         }
     }
@@ -1378,10 +1496,10 @@ pub mod pga3d {
     impl<T: Ring> YHat for Vector<T> {
         fn y_hat() -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: T::zero(),
-                a2: T::one(),
-                a3: T::zero(),
+                x: T::zero(),
+                y: T::one(),
+                z: T::zero(),
+                w: T::zero(),
             }
         }
     }
@@ -1389,33 +1507,33 @@ pub mod pga3d {
     impl<T: Ring> ZHat for Vector<T> {
         fn z_hat() -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: T::zero(),
-                a2: T::zero(),
-                a3: T::one(),
+                x: T::zero(),
+                y: T::zero(),
+                z: T::one(),
+                w: T::zero(),
             }
         }
     }
 
     impl<T: Ring> IdentityMotor for AntiScalar<T> {
         fn identity_motor() -> AntiScalar<T> {
-            AntiScalar { a0123: T::one() }
+            AntiScalar { wxyz: T::one() }
         }
     }
 
     impl<T: Ring> IdentityMotor for AntiEven<T> {
         fn identity_motor() -> AntiEven<T> {
-            AntiScalar { a0123: T::one() }.into()
+            AntiScalar { wxyz: T::one() }.into()
         }
     }
 
     impl<T: Ring> Point<[T; 3]> for Vector<T> {
         fn point([x, y, z]: [T; 3]) -> Vector<T> {
             Vector {
-                a0: T::one(),
-                a1: x,
-                a2: y,
-                a3: z,
+                x,
+                y,
+                z,
+                w: T::one(),
             }
         }
     }
@@ -1423,21 +1541,11 @@ pub mod pga3d {
     impl<T: Ring> IdealPoint<[T; 3]> for Vector<T> {
         fn ideal_point([x, y, z]: [T; 3]) -> Vector<T> {
             Vector {
-                a0: T::zero(),
-                a1: x,
-                a2: y,
-                a3: z,
+                x,
+                y,
+                z,
+                w: T::zero(),
             }
-        }
-    }
-
-    /// Plane with equation ax + by + cz - d = 0
-    pub fn plane<T>(a: T, b: T, c: T, d: T) -> Trivector<T> {
-        Trivector {
-            a123: d,
-            a032: a,
-            a013: b,
-            a021: c,
         }
     }
 
