@@ -10,7 +10,7 @@ use core::ops::{Add, Mul};
 use ngeom::algebraic_ops::*;
 use ngeom::ops::*;
 use ngeom::scalar::*;
-use ngeom::{pga2d, pga3d};
+use ngeom::{re2, re3};
 use std::fmt::Debug;
 
 struct AppState<SPACE: Space + 'static> {
@@ -59,7 +59,7 @@ trait Space {
 }
 
 struct Space2d {
-    vertices: Vec<pga2d::Vector<f32>>,
+    vertices: Vec<re2::Vector<f32>>,
     edges: Vec<(usize, usize)>,
 }
 
@@ -67,10 +67,10 @@ impl Space2d {
     fn new() -> Self {
         Space2d {
             vertices: vec![
-                pga2d::Vector::point([-0.5, -0.5]),
-                pga2d::Vector::point([-0.5, 0.5]),
-                pga2d::Vector::point([0.5, -0.5]),
-                pga2d::Vector::point([0.5, 0.5]),
+                re2::Vector::point([-0.5, -0.5]),
+                re2::Vector::point([-0.5, 0.5]),
+                re2::Vector::point([0.5, -0.5]),
+                re2::Vector::point([0.5, 0.5]),
             ],
             edges: vec![(0, 1), (1, 3), (3, 2), (2, 0)],
         }
@@ -78,23 +78,23 @@ impl Space2d {
 }
 
 impl Space for Space2d {
-    type Vector = pga2d::Vector<f32>;
-    type Bivector = pga2d::Bivector<f32>;
-    type AntiEven = pga2d::AntiEven<f32>;
+    type Vector = re2::Vector<f32>;
+    type Bivector = re2::Bivector<f32>;
+    type AntiEven = re2::AntiEven<f32>;
 
-    fn cube_vertices(&self) -> &[pga2d::Vector<f32>] {
+    fn cube_vertices(&self) -> &[re2::Vector<f32>] {
         &self.vertices
     }
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, p: pga2d::Vector<f32>) -> Point3<f32> {
+    fn into_point3(&self, p: re2::Vector<f32>) -> Point3<f32> {
         Point3::new(p.x, p.y, 0.)
     }
 }
 
 struct Space3d {
-    vertices: Vec<pga3d::Vector<f32>>,
+    vertices: Vec<re3::Vector<f32>>,
     edges: Vec<(usize, usize)>,
 }
 
@@ -102,14 +102,14 @@ impl Space3d {
     fn new() -> Self {
         Space3d {
             vertices: vec![
-                pga3d::Vector::point([-0.5, -0.5, -0.5]),
-                pga3d::Vector::point([-0.5, -0.5, 0.5]),
-                pga3d::Vector::point([-0.5, 0.5, -0.5]),
-                pga3d::Vector::point([-0.5, 0.5, 0.5]),
-                pga3d::Vector::point([0.5, -0.5, -0.5]),
-                pga3d::Vector::point([0.5, -0.5, 0.5]),
-                pga3d::Vector::point([0.5, 0.5, -0.5]),
-                pga3d::Vector::point([0.5, 0.5, 0.5]),
+                re3::Vector::point([-0.5, -0.5, -0.5]),
+                re3::Vector::point([-0.5, -0.5, 0.5]),
+                re3::Vector::point([-0.5, 0.5, -0.5]),
+                re3::Vector::point([-0.5, 0.5, 0.5]),
+                re3::Vector::point([0.5, -0.5, -0.5]),
+                re3::Vector::point([0.5, -0.5, 0.5]),
+                re3::Vector::point([0.5, 0.5, -0.5]),
+                re3::Vector::point([0.5, 0.5, 0.5]),
             ],
             edges: vec![
                 (0, 1),
@@ -130,17 +130,17 @@ impl Space3d {
 }
 
 impl Space for Space3d {
-    type Vector = pga3d::Vector<f32>;
-    type Bivector = pga3d::Bivector<f32>;
-    type AntiEven = pga3d::AntiEven<f32>;
+    type Vector = re3::Vector<f32>;
+    type Bivector = re3::Bivector<f32>;
+    type AntiEven = re3::AntiEven<f32>;
 
-    fn cube_vertices(&self) -> &[pga3d::Vector<f32>] {
+    fn cube_vertices(&self) -> &[re3::Vector<f32>] {
         &self.vertices
     }
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, p: pga3d::Vector<f32>) -> Point3<f32> {
+    fn into_point3(&self, p: re3::Vector<f32>) -> Point3<f32> {
         Point3::new(p.x, p.y, p.z)
     }
 }
