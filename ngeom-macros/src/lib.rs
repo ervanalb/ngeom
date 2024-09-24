@@ -1371,6 +1371,8 @@ fn implement_geometric_algebra(
             // Add a method A.anti_reverse()
             let op_trait = quote! { AntiReverse };
             let op_fn = Ident::new("anti_reverse", Span::call_site());
+            let alias_trait = quote! { InverseTransformation };
+            let alias_fn = Ident::new("inverse_transformation", Span::call_site());
             let anti_reverse_f = |coef: isize, i: usize| {
                     let (coef, i) = right_complement(&right_complement_signs, coef, i);
                     let (coef, i) = reverse_f(coef, i);
@@ -1378,7 +1380,14 @@ fn implement_geometric_algebra(
                     (coef, i)
                 };
             let anti_reverse_expressions = generate_symbolic_rearrangement(&obj_self_components, anti_reverse_f);
-            let anti_reverse_code = gen_unary_operator(&objects, op_trait, op_fn, &obj, &anti_reverse_expressions, None);
+            let anti_reverse_code = gen_unary_operator(
+                &objects,
+                op_trait,
+                op_fn,
+                &obj,
+                &anti_reverse_expressions,
+                Some((alias_trait, alias_fn)), // alias
+            );
 
             // Add a method A.right_complement()
             let op_trait = quote! { RightComplement };
@@ -1969,8 +1978,8 @@ fn implement_geometric_algebra(
             );
 
             // Add a method A.reverse_transform(B) which computes B ⟇ A ⟇ B̰
-            let op_trait = quote! { ReverseTransform };
-            let op_fn = Ident::new("reverse_transform", Span::call_site());
+            let op_trait = quote! { TransformInverse };
+            let op_fn = Ident::new("transform_inverse", Span::call_site());
             // Compute first half of B ⟇ A ⟇ B̰
             // Where i maps to B, and j maps to A.
             // In part 2, we will compute the geometric antiproduct of this intermediate result

@@ -972,6 +972,10 @@ pub mod ops {
     ///
     /// Note that motors are composed left-to-right.
     /// This is the opposite convention of quaternions or matrices, which compose right-to-left.
+    ///
+    /// If you find yourself sandwiching `compose()` operations
+    /// to re-interpret transformations in the context of a different reference frame,
+    /// consider using [Transform] or [TransformInverse] instead.
     pub trait Compose<T> {
         type Output;
         fn compose(self, r: T) -> Self::Output;
@@ -1072,24 +1076,40 @@ pub mod ops {
 
     /// Transform element A by motor or flector B
     ///
-    /// Note that transforming by a flector will result in negated output.
-    /// This is not geometrically meaningful due to homogeneous coordinates,
+    /// Element A can itself be a motor or flector.
+    /// In that case, this operation reinterprets transformation A
+    /// from being intrinsic to B to being extrinsic.
+    ///
+    /// In other words, `a.transform_inverse(b)` is equivalent to, but cheaper than,
+    /// `b.inverse_transformation().compose(a).compose(b)`
+    ///
+    /// Transforming an element by a flector will negate that element.
+    /// This is geometrically equivalent due to homogeneous coordinates,
     /// but you may wish to add a negative sign when performing reflections.
-    /// TODO test this
     pub trait Transform<T> {
         type Output;
         fn transform(self, r: T) -> Self::Output;
     }
 
-    /// Transform element A by the reverse of motor or flector B
+    /// Apply, to element A, the inverse of the transform described by motor or flector B
     ///
-    /// Note that transforming by a flector will result in negated output.
-    /// This is not geometrically meaningful due to homogeneous coordinates,
+    /// If you need to invert the motor or flector before it is applied,
+    /// e.g. in a chain of composed transforms,
+    /// consider using [InverseTransformation] instead.
+    ///
+    /// But also note that element A can itself be a motor or flector.
+    /// In that case, this operation reinterprets transformation A
+    /// from being extrinsic to B to being intrinsic.
+    ///
+    /// In other words, `a.transform_inverse(b)` is equivalent to, but cheaper than,
+    /// `b.compose(a).compose(b.inverse_transformation())`
+    ///
+    /// Transforming an element by a flector will negate that element.
+    /// This is geometrically equivalent due to homogeneous coordinates,
     /// but you may wish to add a negative sign when performing reflections.
-    /// TODO test this
-    pub trait ReverseTransform<T> {
+    pub trait TransformInverse<T> {
         type Output;
-        fn reverse_transform(self, r: T) -> Self::Output;
+        fn transform_inverse(self, r: T) -> Self::Output;
     }
 
     /// Homogeneously scale an element so that its [bulk norm](BulkNorm) is 1.
@@ -1119,6 +1139,7 @@ pub mod ops {
     /// Compute a motor that performs twice the motion needed to take element A to element B
     ///
     /// This function is the basis of creating motors from geometry.
+    ///
     /// For example, in 3D:
     /// * Given two planes, create a rotor about the line where they intersect, by twice the angle
     ///   between them
@@ -1133,6 +1154,18 @@ pub mod ops {
     pub trait MotorTo<T> {
         type Output;
         fn motor_to(self, r: T) -> Self::Output;
+    }
+
+    /// The motor or flector whose transformation is the inverse of the given one
+    ///
+    /// For motors, the direction of the motion will be reversed.
+    /// For flectors, the motion will be reversed, but the flip will remain.
+    ///
+    /// If you only need to invert the motor or flector when it gets applied,
+    /// consider using [TransformInverse] instead.
+    pub trait InverseTransformation {
+        type Output;
+        fn inverse_transformation(self) -> Self::Output;
     }
 
     /// Constructor for a motor that performs no motion
@@ -1278,7 +1311,20 @@ pub mod ops {
     impl_ops_for_scalar!(i128);
 }
 
-/// Rigid geometry for 2D Euclidean space
+/// Rigid Euclidean 2D geometry
+///
+/// This module contains primitives for doing rigid geometry in 2D Euclidean space.
+///
+/// It is *rigid* because its primitives can express transformations that preserve length--
+/// such as translations, rotations, and reflections.
+/// It cannot inherently represent non-rigid transformations, such as dilation or shear--
+/// you will have to eject into a matrix representation (or similar) if you want to do those.
+///
+/// It is *2D* because there are two spatial dimensions.
+/// A third projective dimension is added, resulting in homogeneous coordinates.
+///
+/// It is *Euclidean* because the space has zero curvature,
+/// i.e. the parallel postulate holds.
 pub mod re2 {
     use crate::algebraic_ops::*;
     use crate::ops::*;
@@ -1291,18 +1337,28 @@ pub mod re2 {
 
         /// e.g. a point in space or an ideal (infinite) point
         ///
-        /// A Vector uses homogeneous coordinates to hold either:
-        /// * A point in space: `Vector {x, y, w: 1}` which represents a location
-        /// * An ideal point, or point at infinity: `Vector {x, y, w: 0}` which representing a direction
+        /// ## As geometry
+        /// Geometrically, a Vector can be either:
+        /// * A point in space, e.g. `Vector {x, y, w: 1}`, which represents a location
+        /// * An ideal point, or point at infinity, e.g. `Vector {x, y, w: 0}`, which representing a direction
+        /// All Vectors represent some kind of point.
         ///
-        /// When interpreted as a motor, a point performs an inversion--
+        /// ## As a transformation
+        /// When interpreted as a transformation, a point performs an inversion--
         /// equivalent to a 180-degree rotation--about itself.
         ///
-        /// Two points [join](crate::ops::Join) into a [line](Bivector).
-        /// Two lines [meet](crate::ops::Meet) at a point.
-        /// The sum of two [unitized](crate::ops::Unitized) points is their midpoint.
+        /// ## Example Operations
+        /// * Two points [join](crate::ops::Join) into a [line](Bivector) containing both.
+        /// * Two unitized points [join](crate::ops::Join) into a line whose [weight norm](crate::ops::WeightNorm) is the distance between them.
+        /// * Three unitized points [join](crate::ops::Join) into their parallelogram's [signed area](AntiScalar).
+        /// * The sum of two unitized points is their midpoint.
+        /// * [Unitizing](crate::ops::Unitized) a point divides by the projective coordinate
+        ///   to make w=1 without changing its location
+        /// * [Normalizing](crate::ops::Normalized) an ideal point divides by its length
+        ///   to make a unit vector.
+        /// * The [motor between](crate::ops::MotorTo) two unitized points produces a translation
+        ///   by twice their separation
         ///
-        /// All vectors represent some kind of point.
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct Vector<T> {
@@ -1316,18 +1372,21 @@ pub mod re2 {
 
         /// e.g. a line in space or an ideal (infinite) line
         ///
-        /// A Bivector uses homogeneous coordinates to hold either:
+        /// ## As geometry
+        /// Geometrically, a Bivector can be either:
         /// * A line in space
         /// * An ideal line, or line at infinity, which can be thought to encircle the 2D plane.
+        /// All Bivectors represent some kind of line.
         ///
-        /// When interpreted as a motor, a line performs a reflection across itself.
-        /// An ideal line performs a translation perpendicular to it by twice its [bulk
-        /// norm](crate::ops::BulkNorm).
+        /// ## As a transformation
+        /// When interpreted as a transformation, a line performs a reflection across itself.
         ///
-        /// A line and a point [join](crate::ops::Join) into their parallelogram's [signed area](AntiScalar).
-        /// Two lines [meet](crate::ops::Meet) at a [point](Vector).
+        /// ## Example Operations
+        /// * Two lines [meet](crate::ops::Meet) at a [point](Vector).
+        /// * The sum of two unitized lines is their bisector
+        /// * The [motor between](crate::ops::MotorTo) two unitized points produces a rotation about their
+        ///   intersection point by twice the angle between them.
         ///
-        /// All bivectors represent some kind of point.
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct Bivector<T> {
@@ -1338,11 +1397,10 @@ pub mod re2 {
 
         /// e.g. signed area
         ///
-        /// An AntiScalar is a quantity that behaves like a scalar
+        /// An AntiScalar or [Pseudoscalar](https://en.wikipedia.org/wiki/Pseudoscalar)
+        /// is a quantity that behaves like a scalar
         /// except in the case of improper isometry such as reflection,
         /// where it gains a sign flip.
-        ///
-        /// In 2D, it can be thought to represent a signed area.
         ///
         /// Antiscalars are a distinct type from scalars, but behave similarly.
         /// In this documentation, they are typically written in blackboard bold,
@@ -1352,9 +1410,16 @@ pub mod re2 {
         /// are prefixed with `anti_` e.g. [anti_sqrt()](crate::scalar::AntiSqrt),
         /// [anti_recip()](crate::scalar::AntiRecip)
         ///
-        /// When interpreted as a motor, the antiscalar 𝟙 is the identity transformation.
+        /// ## As geometry
+        /// * Geometrically, an Antiscalar can be thought to represent a signed area.
+        /// All Vectors represent some kind of signed area.
+        ///
+        /// ## As a transformation
+        /// * When interpreted as a transformation, the antiscalar 𝟙 is the identity transformation.
         /// 
-        /// Antiscalars typically result from taking the [weight norm](crate::ops::WeightNorm).
+        /// ## Example Operations
+        /// * Antiscalars typically result from taking the [weight norm](crate::ops::WeightNorm).
+        /// * Antiscalars may be cast to scalars using `.into()` (and vice-versa)
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub struct AntiScalar<T> {
@@ -1368,6 +1433,38 @@ pub mod re2 {
             pub wxy: T,
         }
 
+        /// e.g. a motor
+        ///
+        /// AntiEven holds the sum of a [vector](Vector) and [antiscalar](AntiScalar).
+        /// It is so named because these are the elements whose antigrade is even
+        /// (Ag(antiscalar) = 0, Ag(vector) = 2.)
+        /// An alternative interpretation is that it stores transformations
+        /// that are composed of an even number of reflections.
+        ///
+        /// ## As geometry
+        /// AntiEven should probably not be used to represent geometric objects.
+        /// It is not geometrically meaningful if it contains
+        /// both a vector part and an antiscalar part.
+        ///
+        /// ## As a transformation
+        /// This struct can hold any motor, i.e. it can describe any proper isometry
+        /// (any combination of rotation & translation.)
+        /// It cannot represent an odd number of reflections, e.g. a single reflection,
+        /// which would result in an improper isometry.
+        /// For that, see [AntiOdd].
+        ///
+        /// Generally, a motor [composed](crate::ops::Compose) with its [inverse transformation](crate::ops::InverseTransformation)
+        /// should equal the identity motor 𝟙.
+        /// If it does not, it can be multiplied by the reciprocal square root (under ⟇) of this product
+        /// to return it to the motor manifold
+        /// (similar to normalizing a quaternion.)
+        ///
+        /// ## Example Operations
+        /// * [Composing](crate::ops::Compose) motors A and B results in a third motor whose motion is equivalent to A followed by B
+        /// * Composing a motor A and a flector B results in a [flector](AntiOdd) whose transformation is equivalent to A followed by B 
+        /// * A motor can be made to move the opposite direction using [InverseTransformation](crate::ops::InverseTransformation)
+        /// * A motor's reference frame can be changed using [Transform](crate::ops::Transform) or [TransformInverse](crate::ops::TransformInverse)
+        /// * The square root of a motor (under ⟇) moves half of the original amount
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct AntiEven<T> {
@@ -1377,9 +1474,41 @@ pub mod re2 {
             pub wxy: T,
         }
 
+        /// e.g. a flector
+        ///
+        /// AntiOdd holds the sum of a scalar and [bivector](Bivector).
+        /// It is so named because these are the elements whose antigrade is odd
+        /// (Ag(scalar) = 3, Ag(bivector) = 1.)
+        /// An alternative interpretation is that it stores transformations
+        /// that are composed of an odd number of reflections.
+        ///
+        /// ## As geometry
+        /// AntiOdd should probably not be used to represent geometric objects.
+        /// It is not geometrically meaningful if it contains
+        /// both a bivector part and a scalar part.
+        ///
+        /// ## As a transformation
+        /// This struct can hold any flector, i.e. it can describe any improper isometry
+        /// (a reflection followed by any combination of rotation & translation)
+        /// It cannot represent an even number of reflections, e.g. no reflections,
+        /// which would result in a proper isometry.
+        /// For that, see [AntiEven].
+        ///
+        /// Generally, a flector [composed](crate::ops::Compose) with its [inverse transformation](crate::ops::InverseTransformation)
+        /// should equal the identity motor 𝟙.
+        /// If it does not, it can be multiplied by the reciprocal square root (under ⟇) of this product
+        /// to return it to the flector manifold
+        /// (similar to normalizing a quaternion.)
+        ///
+        /// ## Example Operations
+        /// * [Composing](crate::ops::Compose) flectors A and B results in a *[motor](AntiEven)* whose motion is equivalent to A followed by B
+        /// * Composing a flector A and a motor B results in a flector whose transformation is equivalent to A followed by B 
+        /// * A flector can be made to move the opposite direction (while preserving the flip) using [InverseTransformation](crate::ops::InverseTransformation)
+        /// * A flector's reference frame can be changed using [Transform](crate::ops::Transform) or [TransformInverse](crate::ops::TransformInverse)
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct AntiOdd<T> {
+            /// The scalar part
             pub a: T,
             pub wx: T,
             pub wy: T,
@@ -1501,6 +1630,19 @@ pub mod re2 {
 }
 
 /// Rigid Euclidean 3D geometry
+///
+/// This module contains primitives for doing rigid geometry in 3D Euclidean space.
+///
+/// It is *rigid* because its primitives can express transformations that preserve length--
+/// such as translations, rotations, and reflections.
+/// It cannot inherently represent non-rigid transformations, such as dilation or shear--
+/// you will have to eject into a matrix representation (or similar) if you want to do those.
+///
+/// It is *3D* because there are three spatial dimensions.
+/// A fourth projective dimension is added, resulting in homogeneous coordinates.
+///
+/// It is *Euclidean* because the space has zero curvature,
+/// i.e. the parallel postulate holds.
 pub mod re3 {
     use crate::algebraic_ops::*;
     use crate::ops::*;

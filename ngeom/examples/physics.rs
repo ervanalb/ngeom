@@ -29,7 +29,7 @@ trait Space {
         + YHat
         + Mul<f32, Output = Self::Vector>
         + Add<Output = Self::Vector>
-        + ReverseTransform<Self::AntiEven, Output = Self::Vector>
+        + TransformInverse<Self::AntiEven, Output = Self::Vector>
         + Transform<Self::AntiEven, Output = Self::Vector>;
     type Bivector: Clone
         + Copy
@@ -193,7 +193,7 @@ impl<SPACE: Space> PhysicsState<SPACE> {
     fn gravity_torque(&self, _space: &SPACE) -> SPACE::Bivector {
         let g_s = SPACE::Vector::y_hat() * -1.;
         let p_b = SPACE::Vector::origin(); // Apply gravity to center of mass
-        let g_b = g_s.reverse_transform(self.cube_g);
+        let g_b = g_s.transform_inverse(self.cube_g);
 
         p_b.join(g_b)
     }
@@ -203,7 +203,7 @@ impl<SPACE: Space> PhysicsState<SPACE> {
         let a_s = SPACE::Vector::origin(); // World attachment point, in space frame
         let k = -0.8; // Spring constant
 
-        let a_b = a_s.reverse_transform(self.cube_g);
+        let a_b = a_s.transform_inverse(self.cube_g);
         let spring_line = a_b.join(p_b);
         spring_line * k
     }
