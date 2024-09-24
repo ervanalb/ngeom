@@ -101,28 +101,37 @@
 ///         // won't get automatically implemented.
 ///     }
 ///
-///     // The order the structs are defined is important--
-///     // the return type of a geometric operation will be the
-///     // *first struct* that can represent the output.
-///     // For example, if this `Multivector` struct were defined first,
-///     // all geometric operations would use it for their output type,
-///     // since it contains all of the basis components
-///     // and can therefore represent any multivector.
-///     // For this reason, more comprehensive structs should be defined last.
-///
+///     // Compound object for elements with even antigrade
+///     // (which can represent any motor)
 ///     #[multivector]
 ///     #[derive(Clone, Copy)]
-///     struct Multivector<T> {
-///         a: T, // A field whose name isn't composed of basis vectors
-///               // is assumed to be the scalar component
+///     struct AntiEven<T> {
 ///         w: T,
 ///         x: T,
 ///         y: T,
+///         wxy: T,
+///     }
+///
+///     // Compound object for elements with odd antigrade
+///     // (which can represent any flector)
+///     #[multivector]
+///     #[derive(Clone, Copy)]
+///     struct AntiOdd<T> {
+///         a: T, // A field whose name isn't composed of basis vectors
+///               // is assumed to be the scalar component
 ///         wx: T,
 ///         wy: T,
 ///         xy: T,
-///         wxy: T,
 ///     }
+///
+///     // The order that the structs are defined is important--
+///     // the return type of a geometric operation will be the
+///     // *first struct* that can represent the output.
+///     // For example, were `AntiEven` defined above `Vector`,
+///     // all geometric operations that return a vector
+///     // would instead use `AntiEven` for their output type.
+///     // For this reason, more comprehensive compound structs
+///     // should be defined last.
 /// }
 ///
 /// // The geometric_algebra! macro will emit the contained code verbatim
