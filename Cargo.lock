@@ -1010,6 +1010,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ngeom-bench"
+version = "0.1.0"
+dependencies = [
+ "ngeom",
+]
+
+[[package]]
 name = "ngeom-macros"
 version = "0.1.0"
 dependencies = [

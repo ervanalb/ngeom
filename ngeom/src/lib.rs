@@ -13,6 +13,14 @@
 //! It can even use integers, with some restrictions--
 //! most functionality requires only [scalar addition and multiplication](scalar::Ring).
 //!
+//! With some effort, usage code can be written to be generic
+//! over the dimensionality or even the metric of the space.
+//!
+//! ngeom does not use SIMD intrinsics,
+//! but rather emits compact expressions and structs
+//! that are easy for the compiler to optimize into SIMD instructions
+//! in an architecture-independent way.
+//!
 //! ngeom is `no_std`-compatible, with most functionality available,
 //! and the option to implement the rest.
 //!
@@ -20,9 +28,6 @@
 //! or if you desire a space with different dimensionality, metric, handedness, etc.
 //! then you can use the [provided macro](geometric_algebra)
 //! to generate [geometric operations](ops) on your own `struct`s.
-//!
-//! With some effort, usage code can be written to be generic
-//! over the dimensionality or even the metric of the space.
 //!
 //! Under the hood, ngeom is able to make these generalizations by using [geometric algebra](https://en.wikipedia.org/wiki/Geometric_algebra).
 //! Understanding geometric algebra is helpful but optional,
