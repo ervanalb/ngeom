@@ -1289,13 +1289,45 @@ pub mod re2 {
         basis![w, x, y];
         metric![0, 1, 1];
 
+        /// e.g. a point in space or an ideal (infinite) point
+        ///
+        /// A Vector uses homogeneous coordinates to hold either:
+        /// * A point in space: `Vector {x, y, w: 1}` which represents a location
+        /// * An ideal point, or point at infinity: `Vector {x, y, w: 0}` which representing a direction
+        ///
+        /// When interpreted as a motor, a point performs an inversion--
+        /// equivalent to a 180-degree rotation--about itself.
+        ///
+        /// Two points [join](crate::ops::Join) into a [line](Bivector).
+        /// Two lines [meet](crate::ops::Meet) at a point.
+        /// The sum of two [unitized](crate::ops::Unitized) points is their midpoint.
+        ///
+        /// All vectors represent some kind of point.
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct Vector<T> {
+            /// The coefficient on the W basis vector (the projective dimension)
             pub w: T,
+            /// The coefficient on the X basis vector
             pub x: T,
+            /// The coefficient on the Y basis vector
             pub y: T,
         }
+
+        /// e.g. a line in space or an ideal (infinite) line
+        ///
+        /// A Bivector uses homogeneous coordinates to hold either:
+        /// * A line in space
+        /// * An ideal line, or line at infinity, which can be thought to encircle the 2D plane.
+        ///
+        /// When interpreted as a motor, a line performs a reflection across itself.
+        /// An ideal line performs a translation perpendicular to it by twice its [bulk
+        /// norm](crate::ops::BulkNorm).
+        ///
+        /// A line and a point [join](crate::ops::Join) into their parallelogram's [signed area](AntiScalar).
+        /// Two lines [meet](crate::ops::Meet) at a [point](Vector).
+        ///
+        /// All bivectors represent some kind of point.
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct Bivector<T> {
@@ -1303,17 +1335,39 @@ pub mod re2 {
             pub wy: T,
             pub xy: T,
         }
+
+        /// e.g. signed area
+        ///
+        /// An AntiScalar is a quantity that behaves like a scalar
+        /// except in the case of improper isometry such as reflection,
+        /// where it gains a sign flip.
+        ///
+        /// In 2D, it can be thought to represent a signed area.
+        ///
+        /// Antiscalars are a distinct type from scalars, but behave similarly.
+        /// In this documentation, they are typically written in blackboard bold,
+        /// e.g. 𝟙, 𝟚, 𝟛.
+        ///
+        /// Operations on antiscalars that are dual to those on scalars
+        /// are prefixed with `anti_` e.g. [anti_sqrt()](crate::scalar::AntiSqrt),
+        /// [anti_recip()](crate::scalar::AntiRecip)
+        ///
+        /// When interpreted as a motor, the antiscalar 𝟙 is the identity transformation.
+        /// 
+        /// Antiscalars typically result from taking the [weight norm](crate::ops::WeightNorm).
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
         pub struct AntiScalar<T> {
             pub wxy: T,
         }
+
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct Magnitude<T> {
             pub a: T,
             pub wxy: T,
         }
+
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct AntiEven<T> {
@@ -1322,6 +1376,7 @@ pub mod re2 {
             pub y: T,
             pub wxy: T,
         }
+
         #[multivector]
         #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
         pub struct AntiOdd<T> {
@@ -1329,18 +1384,6 @@ pub mod re2 {
             pub wx: T,
             pub wy: T,
             pub xy: T,
-        }
-        #[multivector]
-        #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-        pub struct Multivector<T> {
-            pub a: T,
-            pub w: T,
-            pub x: T,
-            pub y: T,
-            pub wx: T,
-            pub wy: T,
-            pub xy: T,
-            pub wxy: T,
         }
     }
 
