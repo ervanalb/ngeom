@@ -2,7 +2,8 @@
 
 //! ngeom is a library for doing geometry in N dimensions.
 //!
-//! ngeom provides primitives for points, lines, planes, etc.,
+//! ngeom ships with modules for rigid Euclidean [2D](re2) and [3D](re3) geometry.
+//! The built-in modules provide primitives for points, lines, and planes,
 //! along with rigid transformations (rotations, translations, and reflections.)
 //!
 //! ngeom uses [homogeneous coordinates](https://en.wikipedia.org/wiki/Homogeneous_coordinates) to express ideal/infinite points,
@@ -15,9 +16,11 @@
 //! ngeom is `no_std`-compatible, with most functionality available,
 //! and the option to implement the rest.
 //!
-//! ngeom ships with modules for rigid Euclidean [2D](re2) and [3D](re3) geometry.
-//! Spaces with different dimensionality or metric can be implemented with the help of
-//! auto-generated operations implementations from the [provided macro](ngeom_macros::geometric_algebra).
+//! If you prefer to own your geometric primitives,
+//! or if you desire a space with different dimensionality, metric, handedness, etc.
+//! then you can use the [provided macro](geometric_algebra)
+//! to generate [geometric operations](ops) on your own `struct`s.
+//!
 //! With some effort, usage code can be written to be generic
 //! over the dimensionality or even the metric of the space.
 //!
@@ -37,7 +40,8 @@
 ///   e.g. so you can implement traits on them
 ///   within the constraints of the [orphan rule](https://doc.rust-lang.org/book/ch10-02-traits.html)
 /// * You want to rename the structs or their fields
-/// * You want multivectors for different subsets of basis elements
+/// * You want a left-handed space
+/// * You want multivector structs with different subsets of the basis elements
 /// * You want a different metric, to implement hyperbolic space or spherical space
 /// * You want a different number of dimensions, e.g. 1D or 5D
 ///
@@ -160,6 +164,7 @@ pub mod scalar {
     /// A scalar datatype which is closed under addition and multiplication.
     ///
     /// see <https://en.wikipedia.org/wiki/Ring_(mathematics)>
+    ///
     /// `Ring` is implemented for `f32`, `f64`, and `i8` through `i128`
     ///
     /// `Ring` requires that its datatype is `Copy` to avoid the need to clone or borrow when writing
