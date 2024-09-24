@@ -124,8 +124,11 @@ pub mod scalar {
     /// are on values that are guaranteed by design to be non-negative,
     /// meaning its use within the library is NaN-free.
     pub trait Sqrt: Ring {
+        // The scalar datatype for the square root
+        type Output;
+
         // This scalar's positive square root
-        fn sqrt(self) -> Self;
+        fn sqrt(self) -> <Self as Sqrt>::Output;
     }
 
     /// A scalar datatype which implements trigonometric functions.
@@ -235,6 +238,7 @@ pub mod scalar {
     ///     fn one() -> R32 { R32(1.) }
     /// }
     /// impl Sqrt for R32 {
+    ///     type Output = R32;
     ///     fn sqrt(self) -> R32 { R32(self.0.sqrt()) }
     /// }
     /// impl_ops_for_scalar!(R32); // TODO replace with derive?
@@ -272,7 +276,7 @@ pub mod scalar {
     ///     Some(result * norm.recip())
     /// }
     /// ```
-    pub trait Recip: Sized {
+    pub trait Recip {
         type Output;
         fn recip(self) -> Self::Output;
     }
@@ -321,7 +325,8 @@ pub mod scalar {
     /// This will automatically be implemented for anti-scalars
     /// when their backing scalar type implements `Sqrt`.
     pub trait AntiSqrt {
-        fn anti_sqrt(self) -> Self;
+        type Output;
+        fn anti_sqrt(self) -> Self::Output;
     }
 
     /// The dual of [Trig] for anti-scalars.
@@ -379,6 +384,7 @@ pub mod scalar {
 
             #[cfg(feature = "std")]
             impl Sqrt for $type {
+                type Output = $type;
                 fn sqrt(self) -> $type {
                     self.sqrt()
                 }
@@ -1466,7 +1472,7 @@ pub mod re3 {
         }
     }
 
-    impl<T: Ring + Sqrt + Recip<Output = T>> Magnitude<T> {
+    impl<T: Ring + Sqrt<Output = T> + Recip<Output = T>> Magnitude<T> {
         pub fn rsqrt(self) -> Magnitude<T> {
             let Magnitude { a: s, wxyz: p } = self;
             let sqrt_s = s.sqrt();
@@ -1566,7 +1572,9 @@ pub mod re3 {
     }
 
     /// Rotor about line l by its weight
-    pub fn rotor<T: Ring + Rational + Trig<Output = T> + Sqrt>(l: Bivector<T>) -> AntiEven<T> {
+    pub fn rotor<T: Ring + Rational + Trig<Output = T> + Sqrt<Output = T>>(
+        l: Bivector<T>,
+    ) -> AntiEven<T> {
         let half_phi = l.weight_norm() * T::one_half();
         l.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }

@@ -773,6 +773,75 @@ fn gen_binary_operator<
         .collect()
 }
 
+fn gen_antiscalar_operator(
+    basis_element_count: usize,
+    op_trait: Ident,
+    anti_op_trait: Ident,
+    op_fns: &[(Ident, Ident)],
+    obj: &Object,
+) -> TokenStream {
+    let is_antiscalar = (0..basis_element_count).all(|i| {
+        if i == basis_element_count - 1 {
+            obj.has_component(i)
+        } else {
+            !obj.has_component(i)
+        }
+    });
+
+    if !is_antiscalar {
+        // Do not generate anti-operations on types which are not the antiscalar
+        return quote! {};
+    }
+
+    let Object::Struct(struct_obj) = obj else {
+        // Do not generate operations on the scalar--
+        // these violate rust's orphan rule
+        // or result in conflicting trait implementations.
+        // This should never happen--the scalar should never be the antiscalar
+        return quote! {};
+    };
+
+    let (field, coef) = struct_obj.select_components[basis_element_count - 1]
+        .as_ref()
+        .unwrap();
+
+    if *coef != 1 {
+        // Do not generate antiscalar operations if the antiscalar field in the struct
+        // is actually the negative antiscalar.
+        // We could generate these, but this is likely an error and is very confusing
+        // e.g. x.abs() would return a negative field value
+        return quote! {};
+    }
+
+    let field_expr = quote! {
+        self . #field
+    };
+
+    let type_name = &obj.type_name();
+    let struct_name = struct_obj.name.clone();
+
+    let functions_code: TokenStream = op_fns
+        .iter()
+        .map(|(fn_ident, anti_fn_ident)| {
+            quote! {
+                fn #anti_fn_ident (self) -> Self::Output {
+                    #struct_name {
+                        #field: #field_expr . #fn_ident ()
+                    }
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        impl < T: #op_trait > #anti_op_trait for #type_name {
+            type Output = #struct_name < < T as #op_trait >::Output >;
+
+            #functions_code
+        }
+    }
+}
+
 fn implement_geometric_algebra(
     basis_vector_idents: Vec<Ident>,
     metric: Vec<isize>,
@@ -888,7 +957,7 @@ fn implement_geometric_algebra(
                 {
                     return Err(Error::new(
                         component_ident.span(),
-                        "Bad identifier: must be common prefix + 1 or more chars",
+                        "Bad identifier: must be common prefix + 1 or more chars (and there is already a scalar field)",
                     ));
                 }
                 let variant_product = component_ident_str
@@ -903,18 +972,17 @@ fn implement_geometric_algebra(
                             .position(|c2| c2 == c)
                             .ok_or(Error::new(
                                 component_ident.span(),
-                                "Bad identifier: must be composed of basis vectors",
+                                "Bad identifier: must be composed of basis vectors (and there is already a scalar field)",
                             ))
                     })
                     .collect::<Result<Vec<_>>>();
 
                 // Don't immediately throw the error if we get something that is not composed of basis vectors--we will special-case the scalar value
-                // which can be any single unused letter if there is no common prefix.
-                if b.is_err()
-                    && select_components[0].is_none()
-                    && ident_prefix_len == 0
-                    && component_ident_str.chars().count() == 1
-                {
+                // which can be any identifier.
+                if let Err(e) = b {
+                    if select_components[0].is_some() {
+                        return Err(e);
+                    }
                     b = Ok(vec![]);
                 }
 
@@ -1145,62 +1213,6 @@ fn implement_geometric_algebra(
         (coef, ix)
     };
 
-    // TODO Fix handling of antiscalar!
-    let anti_scalar_ops: TokenStream = {
-        let field = Ident::new(
-            &(ident_prefix + &ident_variants.into_iter().collect::<String>()),
-            Span::call_site(),
-        );
-
-        quote! {
-            impl<T: Abs> AntiAbs for AntiScalar<T> {
-                type Output = AntiScalar<<T as Abs>::Output>;
-                fn anti_abs(self) -> Self::Output {
-                    AntiScalar {
-                        #field: self.#field.abs(),
-                    }
-                }
-            }
-
-            impl<T: Recip> AntiRecip for AntiScalar<T> {
-                type Output = AntiScalar<<T as Recip>::Output>;
-                fn anti_recip(self) -> Self::Output {
-                    AntiScalar {
-                        #field: self.#field.recip(),
-                    }
-                }
-            }
-
-            impl<T: Sqrt> AntiSqrt for AntiScalar<T> {
-                fn anti_sqrt(self) -> AntiScalar<T> {
-                    AntiScalar {
-                        #field: self.#field.sqrt(),
-                    }
-                }
-            }
-
-            impl<T: Trig> AntiTrig for AntiScalar<T> {
-                type Output = AntiScalar<<T as Trig>::Output>;
-
-                fn anti_cos(self) -> Self::Output {
-                    AntiScalar {
-                        #field: self.#field.cos(),
-                    }
-                }
-                fn anti_sin(self) -> Self::Output {
-                    AntiScalar {
-                        #field: self.#field.sin(),
-                    }
-                }
-                fn anti_sinc(self) -> Self::Output {
-                    AntiScalar {
-                        #field: self.#field.sinc(),
-                    }
-                }
-            }
-        }
-    };
-
     let impl_code: TokenStream = objects
         .iter()
         .map(|obj| {
@@ -1275,6 +1287,64 @@ fn implement_geometric_algebra(
             };
 
             let obj_self_components = &obj.select_components(Ident::new("self", Span::call_site()), basis_element_count);
+
+            // Add a method anti_abs() on the antiscalar
+            let anti_abs_code = gen_antiscalar_operator(
+                basis_element_count,
+                Ident::new("Abs", Span::call_site()),
+                Ident::new("AntiAbs", Span::call_site()),
+                &[(
+                    Ident::new("abs", Span::call_site()),
+                    Ident::new("anti_abs", Span::call_site()),
+                )],
+                obj,
+            );
+
+            // Add a method anti_recip() on the antiscalar
+            let anti_recip_code = gen_antiscalar_operator(
+                basis_element_count,
+                Ident::new("Recip", Span::call_site()),
+                Ident::new("AntiRecip", Span::call_site()),
+                &[(
+                    Ident::new("recip", Span::call_site()),
+                    Ident::new("anti_recip", Span::call_site()),
+                )],
+                obj,
+            );
+
+            // Add a method anti_sqrt() on the antiscalar
+            let anti_sqrt_code = gen_antiscalar_operator(
+                basis_element_count,
+                Ident::new("Sqrt", Span::call_site()),
+                Ident::new("AntiSqrt", Span::call_site()),
+                &[(
+                    Ident::new("sqrt", Span::call_site()),
+                    Ident::new("anti_sqrt", Span::call_site()),
+                )],
+                obj,
+            );
+
+            // Add a method anti_trig() on the antiscalar
+            let anti_trig_code = gen_antiscalar_operator(
+                basis_element_count,
+                Ident::new("Trig", Span::call_site()),
+                Ident::new("AntiTrig", Span::call_site()),
+                &[
+                    (
+                        Ident::new("cos", Span::call_site()),
+                        Ident::new("anti_cos", Span::call_site()),
+                    ),
+                    (
+                        Ident::new("sin", Span::call_site()),
+                        Ident::new("anti_sin", Span::call_site()),
+                    ),
+                    (
+                        Ident::new("sinc", Span::call_site()),
+                        Ident::new("anti_sinc", Span::call_site()),
+                    ),
+                ],
+                obj,
+            );
 
             // Overload unary -
             let op_trait = quote! { core::ops::Neg };
@@ -1395,9 +1465,9 @@ fn implement_geometric_algebra(
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring + Sqrt > BulkNorm for #type_name
+                        impl < T: Ring > BulkNorm for #type_name
                             where <Self as BulkNormSquared>::Output: Sqrt {
-                            type Output = <Self as BulkNormSquared>::Output;
+                            type Output = <<Self as BulkNormSquared>::Output as Sqrt>::Output;
 
                             fn bulk_norm (self) -> Self::Output {
                                 self.bulk_norm_squared().sqrt()
@@ -1430,9 +1500,9 @@ fn implement_geometric_algebra(
                     // Take the square root of the norm numerically
                     let type_name = obj.type_name();
                     quote! {
-                        impl < T: Ring + Sqrt > WeightNorm for #type_name
+                        impl < T: Ring > WeightNorm for #type_name
                             where <Self as WeightNormSquared>::Output: AntiSqrt {
-                            type Output = <Self as WeightNormSquared>::Output;
+                            type Output = <<Self as WeightNormSquared>::Output as AntiSqrt>::Output;
 
                             fn weight_norm (self) -> Self::Output {
                                 self.weight_norm_squared().anti_sqrt()
@@ -2089,6 +2159,10 @@ fn implement_geometric_algebra(
                 // ===========================================================================
 
                 #from_code
+                #anti_abs_code
+                #anti_recip_code
+                #anti_sqrt_code
+                #anti_trig_code
                 #neg_code
                 #reverse_code
                 #anti_reverse_code
@@ -2129,10 +2203,7 @@ fn implement_geometric_algebra(
         })
         .collect();
 
-    Ok(quote! {
-        #anti_scalar_ops
-        #impl_code
-    })
+    Ok(impl_code)
 }
 
 /// A wrapper around Vec<syn::Item> so we can implement Parse on it
