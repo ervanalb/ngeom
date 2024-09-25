@@ -13,13 +13,13 @@ use ngeom::scalar::*;
 use ngeom::{re2, re3};
 use std::fmt::Debug;
 
-struct AppState<SPACE: Space + 'static> {
+pub struct AppState<SPACE: Space + 'static> {
     arc_ball_camera: ArcBall,
     space: SPACE,
     physics: PhysicsState<SPACE>,
 }
 
-trait Space {
+pub trait Space {
     type Vector: Clone
         + Copy
         + Debug
@@ -56,25 +56,13 @@ trait Space {
 
     // Convert VECTOR to Point3
     fn into_point3(&self, x: Self::Vector) -> Point3<f32>;
+
+    fn new() -> Self;
 }
 
-struct Space2d {
+pub struct Space2d {
     vertices: Vec<re2::Vector<f32>>,
     edges: Vec<(usize, usize)>,
-}
-
-impl Space2d {
-    fn new() -> Self {
-        Space2d {
-            vertices: vec![
-                re2::Vector::point([-0.5, -0.5]),
-                re2::Vector::point([-0.5, 0.5]),
-                re2::Vector::point([0.5, -0.5]),
-                re2::Vector::point([0.5, 0.5]),
-            ],
-            edges: vec![(0, 1), (1, 3), (3, 2), (2, 0)],
-        }
-    }
 }
 
 impl Space for Space2d {
@@ -91,14 +79,38 @@ impl Space for Space2d {
     fn into_point3(&self, p: re2::Vector<f32>) -> Point3<f32> {
         Point3::new(p.x, p.y, 0.)
     }
+    fn new() -> Self {
+        Space2d {
+            vertices: vec![
+                re2::Vector::point([-0.5, -0.5]),
+                re2::Vector::point([-0.5, 0.5]),
+                re2::Vector::point([0.5, -0.5]),
+                re2::Vector::point([0.5, 0.5]),
+            ],
+            edges: vec![(0, 1), (1, 3), (3, 2), (2, 0)],
+        }
+    }
 }
 
-struct Space3d {
+pub struct Space3d {
     vertices: Vec<re3::Vector<f32>>,
     edges: Vec<(usize, usize)>,
 }
 
-impl Space3d {
+impl Space for Space3d {
+    type Vector = re3::Vector<f32>;
+    type Bivector = re3::Bivector<f32>;
+    type AntiEven = re3::AntiEven<f32>;
+
+    fn cube_vertices(&self) -> &[re3::Vector<f32>] {
+        &self.vertices
+    }
+    fn cube_edges(&self) -> &[(usize, usize)] {
+        &self.edges
+    }
+    fn into_point3(&self, p: re3::Vector<f32>) -> Point3<f32> {
+        Point3::new(p.x, p.y, p.z)
+    }
     fn new() -> Self {
         Space3d {
             vertices: vec![
@@ -126,22 +138,6 @@ impl Space3d {
                 (3, 7),
             ],
         }
-    }
-}
-
-impl Space for Space3d {
-    type Vector = re3::Vector<f32>;
-    type Bivector = re3::Bivector<f32>;
-    type AntiEven = re3::AntiEven<f32>;
-
-    fn cube_vertices(&self) -> &[re3::Vector<f32>] {
-        &self.vertices
-    }
-    fn cube_edges(&self) -> &[(usize, usize)] {
-        &self.edges
-    }
-    fn into_point3(&self, p: re3::Vector<f32>) -> Point3<f32> {
-        Point3::new(p.x, p.y, p.z)
     }
 }
 
@@ -278,6 +274,24 @@ impl<SPACE: Space> Unitized for PhysicsState<SPACE> {
     }
 }
 
+impl<SPACE: Space> AppState<SPACE> {
+    pub fn new() -> (Window, impl State) {
+        let mut window = Window::new("ngeom N-dimensional Physics Demo");
+        window.set_light(Light::StickToCamera);
+
+        let mut arc_ball = ArcBall::new(Point3::new(0., 0., 10.), Point3::origin());
+        arc_ball.set_up_axis(Vector3::new(0., 1., 0.));
+
+        let state = AppState {
+            arc_ball_camera: arc_ball,
+            space: SPACE::new(),
+            physics: PhysicsState::new(),
+        };
+
+        (window, state)
+    }
+}
+
 impl<SPACE: Space> State for AppState<SPACE> {
     fn step(&mut self, window: &mut Window) {
         self.physics = rk4(|y| y.d_dt(&self.space), self.physics, 0.06_f32);
@@ -328,21 +342,4 @@ fn draw_axes(window: &mut Window) {
         &Point3::new(0., 0., 1.),
         &Point3::new(0., 0., 1.),
     );
-}
-
-fn main() {
-    let mut window = Window::new("ngeom N-dimensional Physics Demo");
-
-    window.set_light(Light::StickToCamera);
-
-    let mut arc_ball = ArcBall::new(Point3::new(0., 0., 10.), Point3::origin());
-    arc_ball.set_up_axis(Vector3::new(0., 1., 0.));
-
-    let state = AppState {
-        arc_ball_camera: arc_ball,
-        space: Space2d::new(),
-        physics: PhysicsState::new(),
-    };
-
-    window.render_loop(state)
 }

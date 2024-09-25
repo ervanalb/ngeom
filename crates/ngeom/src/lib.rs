@@ -6,6 +6,11 @@
 //! The built-in modules provide primitives for points, lines, and planes,
 //! along with rigid transformations (rotations, translations, and reflections.)
 //!
+//! If you prefer to own your geometric primitives,
+//! or if you desire a space with different dimensionality, metric, handedness, etc.
+//! then you can use the [provided macro](geometric_algebra)
+//! to generate all the necessary [geometric operations](ops) on your own `struct`s.
+//!
 //! ngeom uses [homogeneous coordinates](https://en.wikipedia.org/wiki/Homogeneous_coordinates) to express ideal/infinite points,
 //! ideal/infinite lines, etc. and to provide for exception-free [meet](ops::Meet) & [join](ops::Join) operations.
 //!
@@ -21,13 +26,9 @@
 //! that are easy for the compiler to optimize into SIMD instructions
 //! in an architecture-independent way.
 //!
+//! ngeom is dependency-free.
 //! ngeom is `no_std`-compatible, with most functionality available,
 //! and the option to implement the rest.
-//!
-//! If you prefer to own your geometric primitives,
-//! or if you desire a space with different dimensionality, metric, handedness, etc.
-//! then you can use the [provided macro](geometric_algebra)
-//! to generate [geometric operations](ops) on your own `struct`s.
 //!
 //! Under the hood, ngeom is able to make these generalizations by using [geometric algebra](https://en.wikipedia.org/wiki/Geometric_algebra).
 //! Understanding geometric algebra is helpful but optional,

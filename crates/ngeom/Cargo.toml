@@ -9,10 +9,3 @@ ngeom-macros = { path = "../ngeom-macros" }
 [features]
 default = ["std"]
 std = []
-
-[[example]]
-name = "physics"
-path = "examples/physics.rs"
-
-[dev-dependencies]
-kiss3d = "0.35.0"
