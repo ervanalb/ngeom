@@ -1,22 +1,36 @@
-use kiss3d::camera::{ArcBall, Camera};
-use kiss3d::light::Light;
-use kiss3d::nalgebra::{Point3, Vector3};
-use kiss3d::planar_camera::PlanarCamera;
-use kiss3d::post_processing::post_processing_effect::PostProcessingEffect;
-use kiss3d::renderer::Renderer;
-use kiss3d::window::{State, Window};
-
 use core::ops::{Add, Mul};
+use eframe::{egui, epaint};
+use std::fmt::Debug;
+
 use ngeom::algebraic_ops::*;
 use ngeom::ops::*;
 use ngeom::scalar::*;
 use ngeom::{re2, re3};
-use std::fmt::Debug;
 
-pub struct AppState<SPACE: Space + 'static> {
-    arc_ball_camera: ArcBall,
+#[cfg(target_arch = "wasm32")]
+mod web;
+
+#[cfg(target_arch = "wasm32")]
+pub use web::*;
+
+pub struct MyApp<SPACE: Space> {
     space: SPACE,
     physics: PhysicsState<SPACE>,
+}
+
+impl<SPACE: Space> Default for MyApp<SPACE> {
+    fn default() -> Self {
+        MyApp {
+            space: SPACE::new(),
+            physics: PhysicsState::new(),
+        }
+    }
+}
+
+impl<SPACE: Space> MyApp<SPACE> {
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        MyApp::default()
+    }
 }
 
 pub trait Space {
@@ -54,8 +68,8 @@ pub trait Space {
     fn cube_vertices(&self) -> &[Self::Vector];
     fn cube_edges(&self) -> &[(usize, usize)];
 
-    // Convert VECTOR to Point3
-    fn into_point3(&self, x: Self::Vector) -> Point3<f32>;
+    // Convert VECTOR to Vec2 for egui
+    fn into_vec2(&self, x: Self::Vector) -> egui::Vec2;
 
     fn new() -> Self;
 }
@@ -76,8 +90,8 @@ impl Space for Space2d {
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, p: re2::Vector<f32>) -> Point3<f32> {
-        Point3::new(p.x, p.y, 0.)
+    fn into_vec2(&self, p: re2::Vector<f32>) -> egui::Vec2 {
+        egui::vec2(p.x, p.y)
     }
     fn new() -> Self {
         Space2d {
@@ -108,8 +122,8 @@ impl Space for Space3d {
     fn cube_edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
-    fn into_point3(&self, p: re3::Vector<f32>) -> Point3<f32> {
-        Point3::new(p.x, p.y, p.z)
+    fn into_vec2(&self, p: re3::Vector<f32>) -> egui::Vec2 {
+        egui::vec2(p.x, p.y)
     }
     fn new() -> Self {
         Space3d {
@@ -221,25 +235,46 @@ impl<SPACE: Space> PhysicsState<SPACE> {
         //}
     }
 
-    fn draw(&self, space: &SPACE, window: &mut Window) {
+    fn draw(&self, space: &SPACE, painter: &egui::Painter, clip_rect: egui::Rect) {
+
+        let clip_center = clip_rect.center();
+        let clip_scale = clip_rect.width().min(clip_rect.height());
+
+        let into_screen_space = |p| {
+            let mut p2 = space.into_vec2(p);
+            // Adjust camera
+            p2.y += 1.8;
+            p2 *= 0.2;
+            p2.y *= -1.;
+            // Convert to egui coordinates
+            p2 = p2 * clip_scale;
+            clip_center + p2
+        };
+
         let vertices_transformed: Vec<_> = space
             .cube_vertices()
             .iter()
-            .map(|p| p.transform(self.cube_g))
+            .map(|p| {
+                let p = p.transform(self.cube_g);
+                into_screen_space(p)
+            })
             .collect();
-
-        let get_point3 = |i| space.into_point3(vertices_transformed[i]);
 
         // Draw cube
         for &(i1, i2) in space.cube_edges() {
-            window.draw_line(&get_point3(i1), &get_point3(i2), &Point3::new(1., 1., 1.));
+            painter.line_segment(
+                [vertices_transformed[i1], vertices_transformed[i2]],
+                epaint::Stroke::new(2., epaint::Color32::DARK_BLUE),
+            );
         }
 
         // Draw spring
-        window.draw_line(
-            &Point3::new(0., 0., 0.),
-            &get_point3(0),
-            &Point3::new(1., 1., 1.),
+        painter.line_segment(
+            [
+                vertices_transformed[0],
+                into_screen_space(SPACE::Vector::origin()),
+            ],
+            epaint::Stroke::new(2., epaint::Color32::DARK_RED),
         );
     }
 }
@@ -274,41 +309,10 @@ impl<SPACE: Space> Unitized for PhysicsState<SPACE> {
     }
 }
 
-impl<SPACE: Space> AppState<SPACE> {
-    pub fn new() -> (Window, impl State) {
-        let mut window = Window::new("ngeom N-dimensional Physics Demo");
-        window.set_light(Light::StickToCamera);
-
-        let mut arc_ball = ArcBall::new(Point3::new(0., 0., 10.), Point3::origin());
-        arc_ball.set_up_axis(Vector3::new(0., 1., 0.));
-
-        let state = AppState {
-            arc_ball_camera: arc_ball,
-            space: SPACE::new(),
-            physics: PhysicsState::new(),
-        };
-
-        (window, state)
-    }
-}
-
-impl<SPACE: Space> State for AppState<SPACE> {
-    fn step(&mut self, window: &mut Window) {
+impl<SPACE: Space> MyApp<SPACE> {
+    fn step(&mut self) {
         self.physics = rk4(|y| y.d_dt(&self.space), self.physics, 0.06_f32);
         self.physics = self.physics.unitized();
-        draw_axes(window);
-        self.physics.draw(&self.space, window);
-    }
-
-    fn cameras_and_effect_and_renderer(
-        &mut self,
-    ) -> (
-        Option<&mut dyn Camera>,
-        Option<&mut dyn PlanarCamera>,
-        Option<&mut dyn Renderer>,
-        Option<&mut dyn PostProcessingEffect>,
-    ) {
-        (Some(&mut self.arc_ball_camera), None, None, None)
     }
 }
 
@@ -326,20 +330,16 @@ fn rk4<T: Ring + Rational, Y: Copy + Mul<T, Output = Y> + Add<Y, Output = Y>, F:
     y + (k2 + k3 + (k1 + k4) * T::one_half()) * (h * T::one_third())
 }
 
-fn draw_axes(window: &mut Window) {
-    window.draw_line(
-        &Point3::new(0., 0., 0.),
-        &Point3::new(1., 0., 0.),
-        &Point3::new(1., 0.0, 0.0),
-    );
-    window.draw_line(
-        &Point3::new(0., 0., 0.),
-        &Point3::new(0., 1., 0.),
-        &Point3::new(0.0, 1., 0.0),
-    );
-    window.draw_line(
-        &Point3::new(0., 0., 0.),
-        &Point3::new(0., 0., 1.),
-        &Point3::new(0., 0., 1.),
-    );
+impl<SPACE: Space> eframe::App for MyApp<SPACE> {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.step();
+
+        ctx.set_visuals(egui::Visuals::light());
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let (_, rect) = ui.allocate_space(ui.available_size());
+            let painter = ui.painter().with_clip_rect(rect);
+            self.physics.draw(&self.space, &painter, rect);
+        });
+        ctx.request_repaint();
+    }
 }
