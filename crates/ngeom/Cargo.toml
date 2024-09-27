@@ -11,7 +11,7 @@ keywords = ["geometry", "graphics"]
 categories = ["data-structures", "mathematics", "no-std", "graphics"]
 
 [dependencies]
-ngeom-macros = { path = "../ngeom-macros" }
+ngeom-macros = { version = "0.1.0", path = "../ngeom-macros" }
 
 [features]
 default = ["std"]
