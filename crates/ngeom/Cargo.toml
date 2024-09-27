@@ -1,7 +1,14 @@
 [package]
 name = "ngeom"
 version = "0.1.0"
+authors = ["Eric Van Albert"]
+description = "Geometry in N dimensions"
+repository = "https://github.com/ervanalb/ngeom"
 edition = "2021"
+readme = "../../README.md"
+license = "MIT"
+keywords = ["geometry", "graphics"]
+categories = ["data-structures", "mathematics", "no-std", "graphics"]
 
 [dependencies]
 ngeom-macros = { path = "../ngeom-macros" }

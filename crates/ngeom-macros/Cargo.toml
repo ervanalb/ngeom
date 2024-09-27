@@ -1,7 +1,12 @@
 [package]
 name = "ngeom-macros"
 version = "0.1.0"
+authors = ["Eric Van Albert"]
+description = "Internal proc-macro crate for ngeom"
+repository = "https://github.com/ervanalb/ngeom"
 edition = "2021"
+license = "MIT"
+readme = "../../README.md"
 
 [lib]
 proc-macro = true
