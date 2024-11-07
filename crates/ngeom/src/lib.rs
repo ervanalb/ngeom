@@ -82,19 +82,19 @@
 ///
 ///     #[multivector] // Use this pseudo-macro to call out that a struct is a multivector
 ///     #[derive(Clone, Copy)] // Multivectors must be Copy for use in math expressions
-///     struct Vector<T> { // Multivectors must have a single generic parameter named T
-///         x: T, // each field must be type T (the scalar type)
-///         y: T,
-///         w: T,
+///     pub struct Vector<T> { // Multivectors must have a single generic parameter named T
+///         pub x: T, // each field must be type T (the scalar type)
+///         pub y: T,
+///         pub w: T,
 ///         // Any basis components that are not present are assumed to be zero.
 ///     }
 ///
 ///     #[multivector]
 ///     #[derive(Clone, Copy)]
-///     struct Bivector<T> {
-///         wx: T, // the coefficient on the basis bivector w ∧ x
-///         wy: T, // the coefficient on the basis bivector w ∧ y
-///         xy: T, // the coefficient on the basis bivector x ∧ y
+///     pub struct Bivector<T> {
+///         pub wx: T, // the coefficient on the basis bivector w ∧ x
+///         pub wy: T, // the coefficient on the basis bivector w ∧ y
+///         pub xy: T, // the coefficient on the basis bivector x ∧ y
 ///
 ///         // The spelling of the field name sets the multiplication order,
 ///         // which may introduce a negative sign.
@@ -104,8 +104,8 @@
 ///
 ///     #[multivector]
 ///     #[derive(Clone, Copy)]
-///     struct AntiScalar<T> {
-///         wxy: T, // the coefficient on the basis trivector w ∧ x ∧ y
+///     pub struct AntiScalar<T> {
+///         pub wxy: T, // the coefficient on the basis trivector w ∧ x ∧ y
 ///
 ///         // The spelling of this field should match the order set by basis![].
 ///         // Otherwise, anti-scalar operations like anti_mul() and anti_sqrt()
@@ -116,23 +116,23 @@
 ///     // (which can represent any motor)
 ///     #[multivector]
 ///     #[derive(Clone, Copy)]
-///     struct AntiEven<T> {
-///         w: T,
-///         x: T,
-///         y: T,
-///         wxy: T,
+///     pub struct AntiEven<T> {
+///         pub x: T,
+///         pub y: T,
+///         pub w: T,
+///         pub wxy: T,
 ///     }
 ///
 ///     // Compound object for elements with odd antigrade
 ///     // (which can represent any flector)
 ///     #[multivector]
 ///     #[derive(Clone, Copy)]
-///     struct AntiOdd<T> {
-///         a: T, // A field whose name isn't composed of basis vectors
-///               // is assumed to be the scalar component
-///         wx: T,
-///         wy: T,
-///         xy: T,
+///     pub struct AntiOdd<T> {
+///         pub a: T, // A field whose name isn't composed of basis vectors
+///                   // is assumed to be the scalar component
+///         pub wx: T,
+///         pub wy: T,
+///         pub xy: T,
 ///     }
 ///
 ///     // The order that the structs are defined is important--
@@ -150,7 +150,7 @@
 ///     // this struct must contain a field for every basis vector,
 ///     // and each field must itself be a vector.
 ///     #[linear_operator]
-///     #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+///     #[derive(Clone, Copy)]
 ///     pub struct LinearOperator<T> {
 ///         pub x: Vector<T>,
 ///         pub y: Vector<T>,
@@ -165,10 +165,10 @@
 /// // across all of the given multivector structs.
 pub use ngeom_macros::geometric_algebra;
 
-pub mod scalar;
 pub mod algebraic_ops;
 pub mod ops;
 pub mod re2;
 pub mod re3;
+pub mod scalar;
 
 mod test;

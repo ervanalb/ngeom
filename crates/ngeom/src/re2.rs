@@ -216,7 +216,7 @@ geometric_algebra! {
     /// e.g. for expressing affine transformations
     ///
     /// This may be used to transform geometry in non-rigid ways,
-    /// such as non-uniform scale & skew.
+    /// such as non-uniform scale & shear.
     ///
     /// It can also represent rigid operations like rotation, translation, and reflection,
     /// but using a [motor](AntiEven) or [flector](AntiOdd) for those

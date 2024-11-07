@@ -2379,6 +2379,13 @@ fn implement_geometric_algebra(
             objects
                 .iter()
                 .map(|lhs_obj| {
+                    if matches!(lhs_obj, Object::Scalar) {
+                        // Do not generate operations with the scalar being the LHS--
+                        // typically because these would violate rust's orphan rule
+                        // or result in conflicting trait implementations
+                        return quote! {};
+                    };
+
                     let lhs_components = lhs_obj.select_components(Ident::new("self", Span::call_site()), basis_element_count);
 
                     let expressions: Vec<_> = (0..basis_element_count).map(|ei| (0..basis_element_count).map(|ej| {

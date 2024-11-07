@@ -271,6 +271,30 @@ geometric_algebra! {
         pub wzx: T,
         pub wyz: T,
     }
+
+    /// e.g. for expressing affine transformations
+    ///
+    /// This may be used to transform geometry in non-rigid ways,
+    /// such as non-uniform scale & shear.
+    ///
+    /// It can also represent rigid operations like rotation, translation, and reflection,
+    /// but using a [motor](AntiEven) or [flector](AntiOdd) for those
+    /// may give better ergonomics and results.
+    ///
+    /// A linear operator is fully described by where it takes the basis vectors.
+    /// It can be thought of as a matrix, where each struct field is a column.
+    #[linear_operator]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct LinearOperator<T> {
+        /// The output of this operator when applied to the X basis vector
+        pub x: Vector<T>,
+        /// The output of this operator when applied to the Y basis vector
+        pub y: Vector<T>,
+        /// The output of this operator when applied to the Z basis vector
+        pub z: Vector<T>,
+        /// The output of this operator when applied to the W basis vector
+        pub w: Vector<T>,
+    }
 }
 
 impl<T: Ring> From<T> for AntiScalar<T> {
@@ -421,4 +445,3 @@ pub fn rotor<T: Ring + Rational + Trig<Output = T> + Sqrt<Output = T>>(
 pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
     Vector::<T>::origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
 }
-
