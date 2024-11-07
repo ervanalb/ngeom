@@ -83,9 +83,9 @@
 ///     #[multivector] // Use this pseudo-macro to call out that a struct is a multivector
 ///     #[derive(Clone, Copy)] // Multivectors must be Copy for use in math expressions
 ///     struct Vector<T> { // Multivectors must have a single generic parameter named T
-///         w: T, // each field must be type T (the scalar type)
-///         x: T,
+///         x: T, // each field must be type T (the scalar type)
 ///         y: T,
+///         w: T,
 ///         // Any basis components that are not present are assumed to be zero.
 ///     }
 ///
@@ -143,6 +143,19 @@
 ///     // would instead use `AntiEven` for their output type.
 ///     // For this reason, more comprehensive compound structs
 ///     // should be defined last.
+///
+///
+///     // You may optionally define a struct that will serve as a linear operator.
+///     // Requirements here are strict:
+///     // this struct must contain a field for every basis vector,
+///     // and each field must itself be a vector.
+///     #[linear_operator]
+///     #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+///     pub struct LinearOperator<T> {
+///         pub x: Vector<T>,
+///         pub y: Vector<T>,
+///         pub w: Vector<T>,
+///     }
 /// }
 ///
 /// // The geometric_algebra! macro will emit the contained code verbatim

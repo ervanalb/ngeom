@@ -439,10 +439,10 @@ pub trait InverseTransformation {
     fn inverse_transformation(self) -> Self::Output;
 }
 
-/// Constructor for a motor that performs no motion
-pub trait IdentityMotor {
-    /// Construct a motor that performs no motion
-    fn identity_motor() -> Self;
+/// Constructor for a transformation that does nothing
+pub trait IdentityTransformation {
+    /// Construct a transformation that performs no motion
+    fn identity_transformation() -> Self;
 }
 
 /// Constructor for a unitized point at the origin

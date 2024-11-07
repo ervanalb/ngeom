@@ -1,5 +1,6 @@
 extern crate proc_macro;
 use core::cmp::Ordering;
+use core::iter::Sum;
 use core::ops::{AddAssign, Mul};
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
@@ -37,28 +38,36 @@ fn sign_from_parity(swaps: usize) -> isize {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 struct SymbolicSumExpr(Vec<SymbolicProdExpr>);
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Default, Debug)]
 struct SymbolicProdExpr(isize, Vec<Symbol>);
 
-#[derive(PartialOrd, Ord, PartialEq, Eq, Clone)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Debug)]
 enum Symbol {
     Scalar(Ident),
     StructField(Ident, Ident), // Two Idents: a var and a field (i.e. var.field)
+    StructSubField(Ident, Ident, Ident), // Three Idents: a var, a field, and a subfield (i.e. var.x.y)
 }
 
 impl ToTokens for Symbol {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
+            Symbol::Scalar(var) => {
+                var.to_tokens(tokens);
+            }
             Symbol::StructField(var, field) => {
                 var.to_tokens(tokens);
                 <Token![.]>::default().to_tokens(tokens);
                 field.to_tokens(tokens);
             }
-            Symbol::Scalar(var) => {
+            Symbol::StructSubField(var, field, subfield) => {
                 var.to_tokens(tokens);
+                <Token![.]>::default().to_tokens(tokens);
+                field.to_tokens(tokens);
+                <Token![.]>::default().to_tokens(tokens);
+                subfield.to_tokens(tokens);
             }
         }
     }
@@ -95,6 +104,18 @@ impl Mul<isize> for SymbolicProdExpr {
         let SymbolicProdExpr(l_coef, _) = &mut self;
         *l_coef *= r;
         self
+    }
+}
+
+impl From<Symbol> for SymbolicProdExpr {
+    fn from(value: Symbol) -> SymbolicProdExpr {
+        SymbolicProdExpr(1, vec![value])
+    }
+}
+
+impl From<isize> for SymbolicProdExpr {
+    fn from(value: isize) -> SymbolicProdExpr {
+        SymbolicProdExpr(value, Vec::new())
     }
 }
 
@@ -225,6 +246,32 @@ impl Mul<isize> for SymbolicSumExpr {
     fn mul(self, r: isize) -> SymbolicSumExpr {
         let SymbolicSumExpr(l) = self;
         SymbolicSumExpr(l.into_iter().map(|lp| lp * r).collect())
+    }
+}
+
+impl<T: Into<SymbolicProdExpr>> From<T> for SymbolicSumExpr {
+    fn from(value: T) -> SymbolicSumExpr {
+        SymbolicSumExpr(vec![value.into()])
+    }
+}
+
+impl Sum<SymbolicSumExpr> for SymbolicSumExpr {
+    fn sum<I>(iter: I) -> SymbolicSumExpr
+    where
+        I: Iterator<Item = SymbolicSumExpr>,
+    {
+        let mut sum = SymbolicSumExpr::default();
+        for term in iter {
+            sum += term;
+        }
+        sum
+    }
+}
+
+impl Mul<SymbolicSumExpr> for SymbolicSumExpr {
+    type Output = SymbolicSumExpr;
+    fn mul(self, SymbolicSumExpr(r): SymbolicSumExpr) -> SymbolicSumExpr {
+        r.into_iter().map(|rterm| self.clone() * rterm).sum()
     }
 }
 
@@ -842,10 +889,89 @@ fn gen_antiscalar_operator(
     }
 }
 
+fn exomorphism<T: Clone + From<isize> + Mul<Output = T> + Mul<isize, Output = T> + Sum>(
+    g: &Vec<Vec<T>>,
+    basis: &Vec<Vec<usize>>,
+) -> Vec<Vec<T>> {
+    // Given a NxN matrix operating on vectors,
+    // generate the 2^N x 2^N matrix matrix that operates on multivectors.
+
+    let exomorphism_entry = |i: usize, j: usize| {
+        // The entry i,j of the exomorphism matrix
+        // can be found using the Gram determinant.
+
+        let bi = &basis[i];
+        let bj = &basis[j];
+        if bi.len() != bj.len() {
+            return 0.into(); // Matrix is block-diagonal
+        }
+        if bi.len() == 0 {
+            return 1.into();
+        }
+
+        let gram_matrix: Vec<Vec<T>> = bi
+            .iter()
+            .map(|&ei| bj.iter().map(|&ej| g[ei][ej].clone()).collect())
+            .collect();
+
+        fn determinant<T: Clone + Mul<Output = T> + Mul<isize, Output = T> + Sum>(
+            m: &Vec<Vec<T>>,
+        ) -> T {
+            if m.len() == 1 {
+                m[0][0].clone()
+            } else {
+                let n = m.len();
+                (0..n)
+                    .map(move |j| {
+                        let i = 0;
+                        let sign = match (i + j) % 2 {
+                            0 => 1,
+                            1 => -1,
+                            _ => panic!("Expected parity to be 0 or 1"),
+                        };
+
+                        let minor: Vec<Vec<_>> = (0..n)
+                            .flat_map(|i2| {
+                                if i2 == i {
+                                    None
+                                } else {
+                                    Some(
+                                        (0..n)
+                                            .flat_map(|j2| {
+                                                if j2 == j {
+                                                    None
+                                                } else {
+                                                    Some(m[i2][j2].clone())
+                                                }
+                                            })
+                                            .collect(),
+                                    )
+                                }
+                            })
+                            .collect();
+
+                        m[i][j].clone() * determinant(&minor) * sign
+                    })
+                    .sum()
+            }
+        }
+        determinant(&gram_matrix)
+    };
+
+    (0..basis.len())
+        .map(|i| {
+            (0..basis.len())
+                .map(move |j| exomorphism_entry(i, j))
+                .collect()
+        })
+        .collect()
+}
+
 fn implement_geometric_algebra(
     basis_vector_idents: Vec<Ident>,
     metric: Vec<isize>,
     multivector_structs: Vec<MultivectorStruct>,
+    linear_operator_struct: Option<Ident>,
 ) -> Result<TokenStream> {
     // Sanity checks
     if basis_vector_idents.len() == 0 {
@@ -1039,89 +1165,15 @@ fn implement_geometric_algebra(
 
     // Generate dot product multiplication table for the basis elements.
     // The dot product always produces a scalar.
-    let dot_product_multiplication_table: Vec<Vec<isize>> = {
-        let multiply_basis_vectors = |ei: usize, ej: usize| {
-            // This would need to get more complicated for CGA
-            // where the metric g is not a diagonal matrix
-            if ei == ej {
-                metric[ei]
-            } else {
-                0
-            }
-        };
+    let metric_2d: Vec<Vec<isize>> = (0..dimension)
+        .map(|i| {
+            (0..dimension)
+                .map(|j| if i == j { metric[i] } else { 0 })
+                .collect()
+        })
+        .collect();
 
-        let multiply_basis_elements = |i: usize, j: usize| {
-            // The scalar product of bivectors, trivectors, etc.
-            // can be found using the Gram determinant.
-
-            let bi = &basis[i];
-            let bj = &basis[j];
-            if bi.len() != bj.len() {
-                return 0;
-            }
-            if bi.len() == 0 {
-                return 1; // 1 • 1 = 1
-            }
-
-            let gram_matrix: Vec<Vec<isize>> = bi
-                .iter()
-                .map(|&ei| {
-                    bj.iter()
-                        .map(|&ej| multiply_basis_vectors(ei, ej))
-                        .collect()
-                })
-                .collect();
-
-            fn determinant(m: &Vec<Vec<isize>>) -> isize {
-                if m.len() == 1 {
-                    m[0][0]
-                } else {
-                    let n = m.len();
-                    (0..n)
-                        .map(move |j| {
-                            let i = 0;
-                            let sign = match (i + j) % 2 {
-                                0 => 1,
-                                1 => -1,
-                                _ => panic!("Expected parity to be 0 or 1"),
-                            };
-
-                            let minor: Vec<Vec<_>> = (0..n)
-                                .flat_map(|i2| {
-                                    if i2 == i {
-                                        None
-                                    } else {
-                                        Some(
-                                            (0..n)
-                                                .flat_map(|j2| {
-                                                    if j2 == j {
-                                                        None
-                                                    } else {
-                                                        Some(m[i2][j2])
-                                                    }
-                                                })
-                                                .collect(),
-                                        )
-                                    }
-                                })
-                                .collect();
-
-                            sign * m[i][j] * determinant(&minor)
-                        })
-                        .sum()
-                }
-            }
-            determinant(&gram_matrix)
-        };
-
-        (0..basis_element_count)
-            .map(|i| {
-                (0..basis_element_count)
-                    .map(move |j| multiply_basis_elements(i, j))
-                    .collect()
-            })
-            .collect()
-    };
+    let dot_product_multiplication_table = exomorphism(&metric_2d, &basis);
 
     let dot_product_f = |coef_i: isize, i: usize, coef_j: isize, j: usize| {
         let coef_mul = dot_product_multiplication_table[i][j];
@@ -2212,7 +2264,225 @@ fn implement_geometric_algebra(
         })
         .collect();
 
-    Ok(impl_code)
+    let linear_operator_code = linear_operator_struct.map(|linear_operator_struct| {
+        // Overload unary -
+        let neg_code = {
+            let output_fields: TokenStream = basis_vector_idents
+                .iter()
+                .map(|basis_vec_ident| {
+                    quote! { #basis_vec_ident: -self.#basis_vec_ident, }
+                })
+                .collect();
+            quote! {
+                impl<T: Ring> core::ops::Neg for #linear_operator_struct<T> {
+                    type Output = #linear_operator_struct<T>;
+
+                    fn neg(self) -> #linear_operator_struct<T> {
+                        #linear_operator_struct {
+                            #output_fields
+                        }
+                    }
+                }
+            }
+        };
+
+        // Overload +
+        let add_code = {
+            let output_fields: TokenStream = basis_vector_idents
+                .iter()
+                .map(|basis_vec_ident| {
+                    quote! { #basis_vec_ident: self.#basis_vec_ident + r.#basis_vec_ident, }
+                })
+                .collect();
+            quote! {
+                impl<T: Ring> core::ops::Add<#linear_operator_struct<T>>
+                    for #linear_operator_struct<T> {
+
+                    type Output = #linear_operator_struct<T>;
+
+                    fn add(self, r: #linear_operator_struct<T>) -> #linear_operator_struct<T> {
+                        #linear_operator_struct {
+                            #output_fields
+                        }
+                    }
+                }
+            }
+        };
+
+        // Overload -
+        let sub_code = {
+            let output_fields: TokenStream = basis_vector_idents
+                .iter()
+                .map(|basis_vec_ident| {
+                    quote! { #basis_vec_ident: self.#basis_vec_ident - r.#basis_vec_ident, }
+                })
+                .collect();
+            quote! {
+                impl<T: Ring> core::ops::Sub<#linear_operator_struct<T>>
+                    for #linear_operator_struct<T> {
+                    type Output = #linear_operator_struct<T>;
+
+                    fn sub(self, r: #linear_operator_struct<T>) -> #linear_operator_struct<T> {
+                        #linear_operator_struct {
+                            #output_fields
+                        }
+                    }
+                }
+            }
+        };
+
+        // Overload * for scalar multiplication
+        let mul_code = {
+            let output_fields: TokenStream = basis_vector_idents
+                .iter()
+                .map(|basis_vec_ident| {
+                    quote! { #basis_vec_ident: self.#basis_vec_ident * r, }
+                })
+                .collect();
+            quote! {
+                impl<T: Ring> core::ops::Mul<T>
+                    for #linear_operator_struct<T> {
+                    type Output = #linear_operator_struct<T>;
+
+                    fn mul(self, r: T) -> #linear_operator_struct<T> {
+                        #linear_operator_struct {
+                            #output_fields
+                        }
+                    }
+                }
+            }
+        };
+
+        // Implement transform
+        let transform_code: TokenStream = {
+            // Turn the transform into a matrix
+            let transform_matrix: Vec<Vec<SymbolicSumExpr>> = basis_vector_idents
+                .iter()
+                .map(|ident_i| {
+                    basis_vector_idents
+                        .iter()
+                        .map(|ident_j| {
+                            Symbol::StructSubField(
+                                Ident::new("r", Span::call_site()),
+                                ident_j.clone(),
+                                ident_i.clone(),
+                            )
+                            .into()
+                        })
+                        .collect()
+                })
+                .collect();
+
+            // Extend the matrix to all multivectors
+            let transform_exomorphism = exomorphism(&transform_matrix, &basis);
+
+            objects
+                .iter()
+                .map(|lhs_obj| {
+                    let lhs_components = lhs_obj.select_components(Ident::new("self", Span::call_site()), basis_element_count);
+
+                    let expressions: Vec<_> = (0..basis_element_count).map(|ei| (0..basis_element_count).map(|ej| {
+                        let lhs_term = lhs_components[ej].as_ref().map(|(symbol, coef)| SymbolicProdExpr(*coef, vec![symbol.clone()])).unwrap_or_default();
+                        transform_exomorphism[ei][ej].clone() * lhs_term
+                    }).sum::<SymbolicSumExpr>().simplify()).collect();
+
+                    // Figure out what the type of the output is
+                    let output_object = find_output_object(&objects, &expressions);
+
+                    let Some(output_object) = output_object else {
+                        // No output object matches the result we got,
+                        // so don't generate any code
+                        return quote! {};
+                    };
+
+                    let lhs_type_name = &lhs_obj.type_name();
+                    let output_type_name = &output_object.type_name_colons();
+
+                    if matches!(output_object, Object::Scalar) && expressions[0].0.len() == 0 {
+                        // This operation unconditionally returns 0,
+                        // so invoking it is probably a type error--
+                        // do not generate code for it.
+
+                        return quote! {};
+                    }
+
+                    let return_expr = match output_object {
+                        Object::Scalar => {
+                            let expr = &expressions[0];
+                            quote! { #expr }
+                        }
+                        Object::Struct(output_struct_object) => {
+                            let output_fields: TokenStream = output_struct_object
+                                .select_components
+                                .iter()
+                                .zip(expressions.iter())
+                                .map(|(select_component, expr)| {
+                                    if let Some((field, coef)) = select_component {
+                                        let expr = expr.clone() * *coef;
+                                        quote! { #field: #expr, }
+                                    } else {
+                                        return quote! {};
+                                    }
+                                })
+                                .collect();
+                            quote! {
+                                #output_type_name {
+                                    #output_fields
+                                }
+                            }
+                        }
+                    };
+
+                    let associated_output_type = quote! { type Output = #output_type_name; };
+
+                    quote! {
+                        impl < T: Ring > Transform < #linear_operator_struct < T > >  for #lhs_type_name {
+                            #associated_output_type
+
+                            fn transform (self, r: #linear_operator_struct < T >) -> #output_type_name {
+                                #return_expr
+                            }
+                        }
+                    }
+                })
+                .collect()
+        };
+
+        // Implement compose
+        let compose_code = {
+            let output_fields: TokenStream = basis_vector_idents
+                .iter()
+                .map(|basis_vec_ident| {
+                    quote! { #basis_vec_ident: self.#basis_vec_ident.transform(r), }
+                })
+                .collect();
+            quote! {
+                impl<T: Ring> Compose<#linear_operator_struct<T>> for #linear_operator_struct<T> {
+                    type Output = #linear_operator_struct<T>;
+
+                    fn compose(self, r: #linear_operator_struct<T>) -> #linear_operator_struct<T> {
+                        #linear_operator_struct {
+                            #output_fields
+                        }
+                    }
+                }
+            }
+        };
+
+        quote! {
+            #neg_code
+            #add_code
+            #sub_code
+            #mul_code
+            #transform_code
+            #compose_code
+        }
+    });
+
+    Ok(quote! {
+        #impl_code
+        #linear_operator_code
+    })
 }
 
 /// A wrapper around Vec<syn::Item> so we can implement Parse on it
@@ -2257,9 +2527,11 @@ fn geometric_algebra2(code: TokenStream) -> Result<TokenStream> {
     let mut metric = None;
     let mut basis = None;
     let mut multivector_structs = Vec::<MultivectorStruct>::new();
+    let mut linear_operator_struct = None;
 
     // Idents to match when parsing
     let multivector_ident = Ident::new("multivector", Span::call_site());
+    let linear_operator_ident = Ident::new("linear_operator", Span::call_site());
     let metric_ident = Ident::new("metric", Span::call_site());
     let basis_ident = Ident::new("basis", Span::call_site());
 
@@ -2325,6 +2597,7 @@ fn geometric_algebra2(code: TokenStream) -> Result<TokenStream> {
             }
             Item::Struct(item_struct) => {
                 let mut has_multivector_attribute = false;
+                let mut has_linear_operator_attribute = false;
 
                 item_struct.attrs.retain(|attr| {
                     if let Attribute {
@@ -2333,16 +2606,28 @@ fn geometric_algebra2(code: TokenStream) -> Result<TokenStream> {
                         ..
                     } = attr
                     {
-                        // Do not retain the #[multivector] attribute
+                        // Do not retain the #[multivector] or #[linear_operator] attributes
                         // but make note that we found it
+                        let mut retain = true;
                         if segments.len() == 1
                             && segments.first().unwrap().ident == multivector_ident
                         {
                             has_multivector_attribute = true;
-                            false
-                        } else {
-                            true
+                            retain = false;
                         }
+                        if segments.len() == 1
+                            && segments.first().unwrap().ident == linear_operator_ident
+                        {
+                            if has_multivector_attribute {
+                                append_err(Error::new(
+                                    segments.first().unwrap().ident.span(),
+                                    "Struct cannot be both #[multivector] and #[linear_operator]",
+                                ));
+                            }
+                            has_linear_operator_attribute = true;
+                            retain = false;
+                        }
+                        retain
                     } else {
                         true
                     }
@@ -2376,6 +2661,18 @@ fn geometric_algebra2(code: TokenStream) -> Result<TokenStream> {
                     }
                 }
 
+                if has_linear_operator_attribute {
+                    // This struct is a linear operator!
+                    if linear_operator_struct.is_some() {
+                        append_err(Error::new(
+                            item_struct.ident.span(),
+                            "Duplicate linear operator struct",
+                        ));
+                    } else {
+                        linear_operator_struct = Some(item_struct.ident.clone());
+                    }
+                }
+
                 true // Retain structs
             }
             _ => {
@@ -2400,7 +2697,8 @@ fn geometric_algebra2(code: TokenStream) -> Result<TokenStream> {
     };
 
     // Generate code
-    let generated_code = implement_geometric_algebra(basis, metric, multivector_structs)?;
+    let generated_code =
+        implement_geometric_algebra(basis, metric, multivector_structs, linear_operator_struct)?;
 
     // Add generated code to original code
     let mut code = TokenStream::new();

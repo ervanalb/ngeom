@@ -366,14 +366,14 @@ impl<T: Ring> ZHat for Vector<T> {
     }
 }
 
-impl<T: Ring> IdentityMotor for AntiScalar<T> {
-    fn identity_motor() -> AntiScalar<T> {
+impl<T: Ring> IdentityTransformation for AntiScalar<T> {
+    fn identity_transformation() -> AntiScalar<T> {
         AntiScalar { wxyz: T::one() }
     }
 }
 
-impl<T: Ring> IdentityMotor for AntiEven<T> {
-    fn identity_motor() -> AntiEven<T> {
+impl<T: Ring> IdentityTransformation for AntiEven<T> {
+    fn identity_transformation() -> AntiEven<T> {
         AntiScalar { wxyz: T::one() }.into()
     }
 }

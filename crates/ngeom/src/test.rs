@@ -524,6 +524,26 @@ fn test_3d_central_projection_line_onto_plane() {
     assert_close!(l2, expected_l2);
 }
 
+#[test]
+fn test_linear_operator() {
+    // Non-uniform scale + translate
+    let m: re2::LinearOperator::<f32> = re2::LinearOperator {
+        x: re2::Vector::x_hat(),
+        y: re2::Vector::y_hat() * 2.,
+        w: re2::Vector::origin() + re2::Vector::x_hat() * 3.,
+    };
+
+    println!("{:?}", m);
+
+    let l1 = re2::Vector::point([0., 0.]).join(re2::Vector::point([1., 1.]));
+    let l2 = re2::Vector::point([10., 0.]).join(re2::Vector::point([9., 1.]));
+
+
+    let transform_lines = l1.transform(m).meet(l2.transform(m)).unitized();
+    let transform_points = l1.meet(l2).transform(m).unitized();
+    assert_close!(transform_lines, transform_points);
+}
+
 /*
     #[test]
     fn test_angle() {

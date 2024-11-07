@@ -55,12 +55,12 @@ geometric_algebra! {
     #[multivector]
     #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
     pub struct Vector<T> {
-        /// The coefficient on the W basis vector (the projective dimension)
-        pub w: T,
         /// The coefficient on the X basis vector
         pub x: T,
         /// The coefficient on the Y basis vector
         pub y: T,
+        /// The coefficient on the W basis vector (the projective dimension)
+        pub w: T,
     }
 
     /// e.g. a line in space or an ideal (infinite) line
@@ -166,9 +166,9 @@ geometric_algebra! {
     #[multivector]
     #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
     pub struct AntiEven<T> {
-        pub w: T,
         pub x: T,
         pub y: T,
+        pub w: T,
         pub wxy: T,
     }
 
@@ -211,6 +211,28 @@ geometric_algebra! {
         pub wx: T,
         pub wy: T,
         pub xy: T,
+    }
+
+    /// e.g. for expressing affine transformations
+    ///
+    /// This may be used to transform geometry in non-rigid ways,
+    /// such as non-uniform scale & skew.
+    ///
+    /// It can also represent rigid operations like rotation, translation, and reflection,
+    /// but using a [motor](AntiEven) or [flector](AntiOdd) for those
+    /// may give better ergonomics and results.
+    ///
+    /// A linear operator is fully described by where it takes the basis vectors.
+    /// It can be thought of as a matrix, where each struct field is a column.
+    #[linear_operator]
+    #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+    pub struct LinearOperator<T> {
+        /// The output of this operator when applied to the X basis vector
+        pub x: Vector<T>,
+        /// The output of this operator when applied to the Y basis vector
+        pub y: Vector<T>,
+        /// The output of this operator when applied to the W basis vector
+        pub w: Vector<T>,
     }
 }
 
@@ -255,9 +277,9 @@ impl<T: Ring + Sqrt + Trig> ExpAntiWedgeDot for Vector<T> {
 impl<T: Ring> Origin for Vector<T> {
     fn origin() -> Vector<T> {
         Vector {
-            w: T::one(),
             x: T::zero(),
             y: T::zero(),
+            w: T::one(),
         }
     }
 }
@@ -265,9 +287,9 @@ impl<T: Ring> Origin for Vector<T> {
 impl<T: Ring> XHat for Vector<T> {
     fn x_hat() -> Vector<T> {
         Vector {
-            w: T::zero(),
             x: T::one(),
             y: T::zero(),
+            w: T::zero(),
         }
     }
 }
@@ -275,22 +297,32 @@ impl<T: Ring> XHat for Vector<T> {
 impl<T: Ring> YHat for Vector<T> {
     fn y_hat() -> Vector<T> {
         Vector {
-            w: T::zero(),
             x: T::zero(),
             y: T::one(),
+            w: T::zero(),
         }
     }
 }
 
-impl<T: Ring> IdentityMotor for AntiScalar<T> {
-    fn identity_motor() -> AntiScalar<T> {
+impl<T: Ring> IdentityTransformation for AntiScalar<T> {
+    fn identity_transformation() -> AntiScalar<T> {
         AntiScalar { wxy: T::one() }
     }
 }
 
-impl<T: Ring> IdentityMotor for AntiEven<T> {
-    fn identity_motor() -> AntiEven<T> {
+impl<T: Ring> IdentityTransformation for AntiEven<T> {
+    fn identity_transformation() -> AntiEven<T> {
         AntiScalar { wxy: T::one() }.into()
+    }
+}
+
+impl<T: Ring> IdentityTransformation for LinearOperator<T> {
+    fn identity_transformation() -> LinearOperator<T> {
+        LinearOperator {
+            x: Vector::x_hat(),
+            y: Vector::y_hat(),
+            w: Vector::origin(),
+        }
     }
 }
 
