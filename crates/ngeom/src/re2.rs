@@ -338,23 +338,11 @@ impl<T: Ring> IdealPoint<[T; 2]> for Vector<T> {
     }
 }
 
-/// Rotor about unitized point p by the given angle
-pub fn axis_angle<T: Ring, A: Ring + Rational + Trig<Output = T>>(
-    axis: Vector<T>,
-    phi: A,
-) -> AntiEven<T> {
-    let half_phi = phi * A::one_half();
-    axis * half_phi.sin() + AntiScalar::from(half_phi.cos())
+impl<T: Ring + Trig<Output = T>> Rotor<Vector<T>> for AntiEven<T> {}
+
+impl<A: Rational + Trig<Output: Ring>> AxisAngle<Vector<<A as Trig>::Output>, A>
+    for AntiEven<<A as Trig>::Output>
+{
 }
 
-/// Rotor about point p by twice its weight
-pub fn rotor<T: Ring + Trig<Output = T>>(p: Vector<T>) -> AntiEven<T> {
-    let half_phi = p.weight_norm();
-    p.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
-}
-
-/// Translator towards ideal point p by its magnitude
-pub fn translator<T: Ring + Rational>(p: Vector<T>) -> AntiEven<T> {
-    Vector::<T>::origin().wedge(p).weight_dual() * T::one_half() + AntiScalar::from(T::one())
-}
-
+impl<T: Ring + Rational> Translator<T, Vector<T>> for AntiEven<T> {}

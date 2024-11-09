@@ -1,5 +1,8 @@
 //! Geometric operations
 
+use crate::algebraic_ops::*;
+use crate::scalar::*;
+
 /// The square of the bulk norm of an element
 ///
 /// See [BulkNorm] for more details.
@@ -534,6 +537,56 @@ pub trait IdealPoint<C> {
     fn ideal_point(x: C) -> Self;
 }
 
+/// Constructor for a rotor about an axis by twice its weight
+pub trait Rotor<AXIS: Copy>: Sized
+where
+    Self: IdentityTransformation,
+    AXIS: WeightNorm<Output: AntiTrig + Copy>
+        + AntiMul<
+            <<AXIS as WeightNorm>::Output as AntiTrig>::Output,
+            Output: core::ops::Add<
+                <<AXIS as WeightNorm>::Output as AntiTrig>::Output,
+                Output = Self,
+            >,
+        >,
+{
+    /// Construct a rotor about the given axis by twice its weight
+    fn rotor(axis: AXIS) -> Self {
+        let half_phi = axis.weight_norm();
+        axis.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
+    }
+}
+
+/// Constructor for a rotor given a unitized axis and scalar angle
+pub trait AxisAngle<AXIS: Copy, ANGLE: Ring + Rational + Trig>: Sized
+where
+    Self: IdentityTransformation
+        + core::ops::Mul<<ANGLE as Trig>::Output, Output = Self>
+        + core::ops::Add<AXIS, Output = Self>,
+    AXIS: core::ops::Mul<<ANGLE as Trig>::Output, Output = AXIS>,
+{
+    /// Construct a rotor given a unitized axis and scalar angle
+    fn axis_angle(axis: AXIS, phi: ANGLE) -> Self {
+        let half_phi = phi * ANGLE::one_half();
+        Self::identity_transformation() * half_phi.cos() + axis * half_phi.sin()
+    }
+}
+
+/// Constructor for a translator
+pub trait Translator<SCALAR, VECTOR>: Sized
+where
+    SCALAR: Ring + Rational,
+    VECTOR: Origin + Wedge<VECTOR, Output: WeightDual<Output: core::ops::Mul<SCALAR>>>,
+    Self: IdentityTransformation
+        + core::ops::Add<<<<VECTOR as Wedge<VECTOR>>::Output as WeightDual>::Output as core::ops::Mul<SCALAR>>::Output, Output=Self>,
+{
+    /// Translator towards ideal point p by its magnitude
+    fn translator(direction: VECTOR) -> Self {
+        Self::identity_transformation()
+            + VECTOR::origin().wedge(direction).weight_dual() * SCALAR::one_half()
+    }
+}
+
 #[macro_export]
 macro_rules! impl_ops_for_scalar {
     ($type:ident) => {
@@ -560,4 +613,3 @@ impl_ops_for_scalar!(i16);
 impl_ops_for_scalar!(i32);
 impl_ops_for_scalar!(i64);
 impl_ops_for_scalar!(i128);
-

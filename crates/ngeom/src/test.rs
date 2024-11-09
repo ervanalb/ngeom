@@ -320,7 +320,7 @@ fn test_3d_line_normal() {
 #[test]
 fn test_2d_rotation() {
     let p = re2::Vector::point([1., 0.]);
-    let motor = re2::axis_angle(re2::Vector::origin(), 0.25 * core::f32::consts::TAU);
+    let motor = re2::AntiEven::axis_angle(re2::Vector::origin(), 0.25 * core::f32::consts::TAU);
     assert_close!(p.transform(motor), re2::Vector::point([0., 1.]));
 }
 
@@ -330,7 +330,7 @@ fn test_3d_rotation() {
     let l = re3::Vector::<f32>::origin()
         .join(re3::Vector::point([0., 0., 1.]))
         .unitized();
-    let motor = re3::axis_angle(l, 0.25 * core::f32::consts::TAU);
+    let motor = re3::AntiEven::axis_angle(l, 0.25 * core::f32::consts::TAU);
     assert_close!(p.transform(motor), re3::Vector::point([0., 1., 0.]));
 }
 
@@ -338,7 +338,7 @@ fn test_3d_rotation() {
 fn test_2d_translation() {
     let p1 = re2::Vector::point([10., 10.]);
 
-    let motor = re2::translator(re2::Vector::ideal_point([0., 5.]));
+    let motor = re2::AntiEven::translator(re2::Vector::ideal_point([0., 5.]));
 
     let p2 = p1.transform(motor);
     assert_close!(p2, re2::Vector::point([10., 15.]));
@@ -348,7 +348,7 @@ fn test_2d_translation() {
 fn test_3d_translation() {
     let p1 = re3::Vector::point([10., 10., 10.]);
 
-    let motor = re3::translator(re3::Vector::ideal_point([0., 5., 0.]));
+    let motor = re3::AntiEven::translator(re3::Vector::ideal_point([0., 5., 0.]));
 
     let p2 = p1.transform(motor);
     assert_close!(p2, re3::Vector::point([10., 15., 10.]));
@@ -383,8 +383,8 @@ fn test_2d_rotation_from_geo() {
 fn test_2d_compose_rotations() {
     let p = re2::Vector::point([10., 10.]);
 
-    let translate_up_5 = re2::translator(re2::Vector::ideal_point([0., 5.]));
-    let rotate_90 = re2::axis_angle(re2::Vector::origin(), 0.25 * core::f32::consts::TAU);
+    let translate_up_5 = re2::AntiEven::translator(re2::Vector::ideal_point([0., 5.]));
+    let rotate_90 = re2::AntiEven::axis_angle(re2::Vector::origin(), 0.25 * core::f32::consts::TAU);
 
     let up_then_rotate = translate_up_5.compose(rotate_90);
     assert_close!(p.transform(up_then_rotate), re2::Vector::point([-15., 10.]));
@@ -547,7 +547,7 @@ fn test_linear_operator() {
 fn test_linear_operator_rotation() {
     // Rotation about Z by 90 degrees expressed as an AntiEven
 
-    let motor = re3::axis_angle(
+    let motor = re3::AntiEven::axis_angle(
         re3::Vector::origin().join(re3::Vector::z_hat()),
         0.25 * core::f32::consts::TAU,
     );
