@@ -12,3 +12,4 @@ categories = ["data-structures", "mathematics", "no-std", "graphics"]
 
 [dependencies]
 ngeom = { path = "../ngeom" }
+enum_dispatch = "0.3.13"
