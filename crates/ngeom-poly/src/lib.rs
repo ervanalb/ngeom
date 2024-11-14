@@ -327,6 +327,29 @@ pub fn interpolate<
     Interpolation { points, uv, graph }
 }
 
+fn u<VECTOR: Sized + Dot<VECTOR> + XHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
+    pt.dot(VECTOR::x_hat())
+}
+fn v<VECTOR: Sized + Dot<VECTOR> + YHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
+    pt.dot(VECTOR::y_hat())
+}
+fn cmp_uv<VECTOR: Sized + Copy + Dot<VECTOR, Output: Ord> + XHat + YHat>(
+    uv1: VECTOR,
+    uv2: VECTOR,
+) -> Ordering {
+    v(uv1).cmp(&v(uv2)).reverse().then(u(uv1).cmp(&u(uv2)))
+}
+fn is_on_left_chain<
+    VECTOR: Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>> + XHat,
+>(
+    pt: VECTOR,
+    next_pt: VECTOR,
+) -> bool {
+    let anti_zero = Default::default();
+    let turn_direction = pt.join(next_pt).join(VECTOR::x_hat());
+    turn_direction > anti_zero
+}
+
 pub fn partition_into_monotone_components<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut graph: Graph,
@@ -335,19 +358,6 @@ where
     SPACE::Vector: Debug,
     SPACE::Scalar: Debug,
 {
-    fn u<VECTOR: Sized + Dot<VECTOR> + XHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
-        pt.dot(VECTOR::x_hat())
-    }
-    fn v<VECTOR: Sized + Dot<VECTOR> + YHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
-        pt.dot(VECTOR::y_hat())
-    }
-    fn cmp_uv<VECTOR: Sized + Copy + Dot<VECTOR, Output: Ord> + XHat + YHat>(
-        uv1: VECTOR,
-        uv2: VECTOR,
-    ) -> Ordering {
-        v(uv1).cmp(&v(uv2)).reverse().then(u(uv1).cmp(&u(uv2)))
-    }
-
     // And finally, perform an argsort of the list
     // to get the sweep-line iteration order
     let mut sweep_line_order: Vec<_> = (0..uv.len()).collect();
@@ -506,8 +516,7 @@ where
             }
         } else {
             // This is a normal vertex
-            let turn_direction = prev_pt.join(pt).join(SPACE::Vector::x_hat());
-            if turn_direction > anti_zero {
+            if is_on_left_chain(pt, next_pt) {
                 // This vertex lies on the left side of the interval
                 //println!("This is a normal left vertex");
                 let edge = pop_t(&mut t, pt).expect("No active edge found to the left of point");
@@ -545,14 +554,18 @@ where
 
 pub fn triangulate_monotone_components<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
-    graph: Graph,
+    mut graph: Graph,
 ) -> Graph {
+    let anti_zero = SPACE::AntiScalar::default();
+
     // Initialize an "unvisited" set
     let mut unvisited_nodes = BTreeSet::<usize>::from_iter(0..graph.nodes.len());
     let mut unvisited_graph = graph.clone();
     let mut monotone_poly_nodes = Vec::<usize>::new();
+    let mut s = Vec::<(usize, bool)>::new();
 
     while let Some(start_node) = unvisited_nodes.pop_first() {
+        // Walk a single monotone polygon from the graph
         monotone_poly_nodes.clear(); // Prepare for a fresh polygon
         let mut cur_node = start_node;
 
@@ -571,10 +584,101 @@ pub fn triangulate_monotone_components<SPACE: SpaceUv>(
             unvisited_nodes.remove(&cur_node);
         }
 
-        println!("Walked a polygon! {:?}", monotone_poly_nodes);
+        if monotone_poly_nodes.len() > 3 {
+            // Store "next" pointers for the current monotone polygon
+            let next: Vec<_> = monotone_poly_nodes[1..]
+                .iter()
+                .cloned()
+                .chain(Some(monotone_poly_nodes[0]).into_iter())
+                .collect();
+
+            // Sort the current monotone polygon nodes in sweep-line order
+            monotone_poly_nodes.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
+
+            // Initialize stack
+            s.clear();
+            s.push((monotone_poly_nodes[0], false));
+            s.push((
+                monotone_poly_nodes[1],
+                is_on_left_chain(uv[monotone_poly_nodes[1]], uv[next[monotone_poly_nodes[1]]]),
+            ));
+            for &node in &monotone_poly_nodes[2..monotone_poly_nodes.len() - 1] {
+                let is_left = is_on_left_chain(uv[node], uv[next[node]]);
+                let (mut s_top, mut s_top_is_left) =
+                    s.pop().expect("Stack empty during triangulaton?");
+                if s_top_is_left != is_left {
+                    // Different chains
+                    while !s.is_empty() {
+                        // Add an edge to all nodes on the stack,
+                        // except the last one
+                        graph.push_edge(node, s_top);
+                        graph.push_edge(s_top, node);
+                        (s_top, s_top_is_left) = s.pop().unwrap();
+                    }
+                } else {
+                    // Same chain
+                    loop {
+                        let Some((s_penultimate, s_penultimate_is_left)) = s.pop() else {
+                            break;
+                        };
+                        // Add an edge if possible
+                        let proposed_tri = uv[node].join(uv[s_top]).join(uv[s_penultimate]);
+                        if is_left && proposed_tri > anti_zero
+                            || !is_left && proposed_tri < anti_zero
+                        {
+                            break;
+                        }
+
+                        (s_top, s_top_is_left) = (s_penultimate, s_penultimate_is_left);
+
+                        graph.push_edge(node, s_top);
+                        graph.push_edge(s_top, node);
+                    }
+                }
+                s.push((s_top, s_top_is_left));
+                s.push((node, is_left));
+            }
+        }
     }
 
-    todo!();
+    graph
+}
+
+pub fn graph_to_triangles(mut graph: Graph) -> Vec<[usize; 3]> {
+    // Initialize an "unvisited" set
+    let mut unvisited_nodes = BTreeSet::<usize>::from_iter(0..graph.nodes.len());
+    let mut triangles = Vec::<[usize; 3]>::new();
+
+    while let Some(node1) = unvisited_nodes.pop_first() {
+        // Walk a single monotone polygon from the graph
+
+        let next_edge = graph
+            .pop_edge(node1)
+            .expect("Bad manifold--no outgoing edge");
+        let node2 = graph.edges[next_edge].to;
+        assert!(node2 != node1, "Graph has a 1-cycle");
+
+        let next_edge = graph
+            .pop_edge(node2)
+            .expect("Bad manifold--no outgoing edge");
+        let node3 = graph.edges[next_edge].to;
+        assert!(node3 != node1, "Graph has a 2-cycle");
+
+        let next_edge = graph
+            .pop_edge(node3)
+            .expect("Bad manifold--no outgoing edge");
+        assert!(
+            node1 == graph.edges[next_edge].to,
+            "Graph has a >3 cycle (not fully triangulated)"
+        );
+
+        unvisited_nodes.remove(&node1);
+        unvisited_nodes.remove(&node2);
+        unvisited_nodes.remove(&node3);
+
+        triangles.push([node1, node2, node3]);
+    }
+    triangles
 }
 
 #[test]
@@ -774,13 +878,13 @@ fn test_triangulate() {
 
     let edges = VecEdge(vec![
         Edge::Line(Line { start: 0, end: 1 }),
-        Edge::Arc(Arc {
-            start: 1,
-            axis: Vector::point([R32(0.), R32(0.)]),
-            end_angle: R32(std::f32::consts::TAU / 8.),
-            end: 2,
-        }),
-        //Edge::Line(Line { start: 1, end: 2 }),
+        //Edge::Arc(Arc {
+        //    start: 1,
+        //    axis: Vector::point([R32(0.), R32(0.)]),
+        //    end_angle: R32(std::f32::consts::TAU / 8.),
+        //    end: 2,
+        //}),
+        Edge::Line(Line { start: 1, end: 2 }),
         Edge::Line(Line { start: 2, end: 3 }),
     ]);
 
@@ -799,7 +903,9 @@ fn test_triangulate() {
     } = interpolate(&vertices, &edges, &faces, |pt| pt);
 
     let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
-    let _graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+    let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+    let triangles = graph_to_triangles(graph);
+    println!("{:?}", triangles);
     //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
     //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
 }
