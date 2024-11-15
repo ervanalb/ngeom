@@ -3,7 +3,7 @@ use ngeom::algebraic_ops::*;
 use ngeom::ops::*;
 use ngeom::scalar::*;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::iter;
 use std::ops::{Add, Index as StdIndex, Mul};
@@ -34,6 +34,7 @@ pub trait SpaceUv {
         + XHat
         + YHat
         + Join<Self::Vector, Output = Self::Bivector>
+        + WeightNorm<Output = Self::AntiScalar>
         + Unitized<Output = Self::Vector>;
     type Bivector: Copy
         + Join<Self::Vector, Output = Self::AntiScalar>
@@ -215,18 +216,18 @@ pub enum PatchTopologyError {
     Branching,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GraphNode {
     pub first_outgoing_edge: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GraphEdge {
     pub to: usize,
     pub next_outgoing_edge: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Graph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
@@ -264,6 +265,27 @@ impl Graph {
         removed_edge
     }
 
+    pub fn push_loop(&mut self, count: usize) {
+        let start = self.nodes.len();
+        let end = start + count;
+
+        self.add_nodes(count);
+        self.edges.reserve(count);
+
+        match count {
+            0 => {}
+            1 => {
+                self.push_edge(start, start);
+            }
+            _ => {
+                for i in start..end - 1 {
+                    self.push_edge(i, i + 1)
+                }
+                self.push_edge(end - 1, start);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -299,25 +321,7 @@ pub fn interpolate<
                 edges[edge_index].interpolate(vertices, dir, &mut points);
             }
             let end = points.len();
-            graph.add_nodes(end - start);
-            if end - start == 0 {
-                // Interpolation contained no points--mistake?
-            } else if end - start == 1 {
-                // Interpolation contained one point--include this point in the triangulation
-                graph.push_edge(start, start);
-                panic!("Cannot handle 1-point polygon (TODO)");
-            } else {
-                graph.edges.reserve(end - start);
-
-                for i in start..end - 1 {
-                    graph.push_edge(i, i + 1)
-                }
-                graph.push_edge(end - 1, start);
-
-                //if end - start == 2 {
-                //    panic!("Cannot handle 2-point polygon (TODO)");
-                //}
-            }
+            graph.push_loop(end - start);
         }
     }
 
@@ -340,23 +344,34 @@ fn cmp_uv<VECTOR: Sized + Copy + Dot<VECTOR, Output: Ord> + XHat + YHat>(
     v(uv1).cmp(&v(uv2)).reverse().then(u(uv1).cmp(&u(uv2)))
 }
 fn is_on_left_chain<
-    VECTOR: Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>> + XHat,
+    VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>> + XHat + YHat,
 >(
     pt: VECTOR,
     next_pt: VECTOR,
 ) -> bool {
     let anti_zero = Default::default();
-    let turn_direction = pt.join(next_pt).join(VECTOR::x_hat());
-    turn_direction > anti_zero
+    let going_down = pt.join(next_pt).join(VECTOR::x_hat());
+    if going_down == anti_zero {
+        // Edge is horizontal
+        let going_right = pt.join(next_pt).join(VECTOR::y_hat());
+        // Edge going right => left chain
+        // Edge going left => right chain
+        assert!(going_right != anti_zero, "Coincident points");
+        going_right > anti_zero
+    } else {
+        // Edge going down => left chain
+        // Edge going up => right chain
+        going_down > anti_zero
+    }
 }
 
-pub fn partition_into_monotone_components<SPACE: SpaceUv>(
+pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut graph: Graph,
 ) -> Graph
 where
-    SPACE::Vector: Debug,
-    SPACE::Scalar: Debug,
+    SPACE::Vector: Debug, // TEMP
+    SPACE::Scalar: Debug, // TEMP
 {
     // And finally, perform an argsort of the list
     // to get the sweep-line iteration order
@@ -370,31 +385,180 @@ where
         helper_is_merge: bool,
     }
 
-    // The state of the sweep line algorithm: a binary tree containing edges and their helpers.
-    // The key is the intersection of the edge and the sweep line
-    let mut t = BTreeMap::<SPACE::Scalar, PolyEdge>::new();
+    // The state of the sweep line algorithm: a sorted list of all active edges and their helpers.
+    // (consider replacing this with a data structure allowing efficient insertion into the middle)
+    let mut t = Vec::<PolyEdge>::new();
 
-    let pop_t =
-        |t: &mut BTreeMap<SPACE::Scalar, PolyEdge>, pt: SPACE::Vector| -> Option<PolyEdge> {
-            let (&old_u, _) = t.range(..=u(pt)).next_back()?;
-            let edge = t.remove(&old_u).unwrap();
-            Some(edge)
+    fn search_t<
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &Vec<PolyEdge>,
+        uv: &[VECTOR],
+        adjacent: &[(usize, usize)],
+        pt: VECTOR,
+    ) -> usize
+    where
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+    {
+        let pt_u = u(pt);
+        let sweep_line = pt.join(VECTOR::x_hat());
+        t.binary_search_by(|&PolyEdge { from_node, .. }| {
+            let (_, to_node) = adjacent[from_node];
+            let edge_line = uv[from_node].join(uv[to_node]);
+            let intersection_pt = sweep_line.meet(edge_line);
+            let intersection_u = u(if intersection_pt.weight_norm() == Default::default() {
+                uv[to_node]
+            } else {
+                intersection_pt.unitized()
+            });
+
+            if intersection_u <= pt_u {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        })
+        .unwrap_err()
+    }
+
+    fn pop_t<
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &mut Vec<PolyEdge>,
+        uv: &[VECTOR],
+        adjacent: &[(usize, usize)],
+        pt: VECTOR,
+    ) -> Option<PolyEdge>
+    where
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+    {
+        let ix = search_t(t, &uv, adjacent, pt);
+
+        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
+
+        let edge = t.remove(ix);
+        Some(edge)
+    }
+
+    fn push_t<
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &mut Vec<PolyEdge>,
+        uv: &[VECTOR],
+        adjacent: &[(usize, usize)],
+        pt: VECTOR,
+        edge: PolyEdge,
+    ) where
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+    {
+        let i = search_t(t, &uv, adjacent, pt);
+        t.insert(i, edge);
+    }
+
+    fn peek_t_mut<
+        'a,
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &'a mut Vec<PolyEdge>,
+        uv: &[VECTOR],
+        adjacent: &[(usize, usize)],
+        pt: VECTOR,
+    ) -> Option<&'a mut PolyEdge>
+    where
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+    {
+        let ix = search_t(t, &uv, adjacent, pt);
+
+        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
+
+        Some(&mut t[ix])
+    }
+
+    /*
+    let search_t =
+        |t: &mut Vec<PolyEdge>, adjacent: &[(usize, usize)], pt: SPACE::Vector| -> usize {
+            let pt_u = u(pt);
+            let sweep_line = pt.join(SPACE::Vector::x_hat());
+            t.binary_search_by(|&PolyEdge { from_node, .. }| {
+                let (_, to_node) = adjacent[from_node];
+                let edge_line = uv[from_node].join(uv[to_node]);
+                let intersection_u = u(sweep_line.meet(edge_line).unitized());
+
+                if intersection_u <= pt_u {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            })
+            .unwrap_err()
         };
 
-    let pop_t_for_update = |t: &mut BTreeMap<SPACE::Scalar, PolyEdge>,
-                            adjacent: &[(usize, usize)],
-                            pt: SPACE::Vector|
-     -> Option<(SPACE::Scalar, PolyEdge)> {
-        let edge = pop_t(t, pt)?;
-        let from_node = edge.from_node;
-        let (_, to_node) = adjacent[from_node];
+    let pop_t = |t: &mut Vec<PolyEdge>,
+                 adjacent: &[(usize, usize)],
+                 pt: SPACE::Vector|
+     -> Option<PolyEdge> {
+        let ix = search_t(t, &uv, adjacent, pt);
 
-        let sweep_line = pt.join(SPACE::Vector::x_hat());
-        let edge_line = uv[from_node].join(uv[to_node]);
+        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
 
-        let new_u = u(sweep_line.meet(edge_line).unitized());
-        Some((new_u, edge))
+        let edge = t.remove(ix);
+        Some(edge)
     };
+
+    let push_t =
+        |t: &mut Vec<PolyEdge>, adjacent: &[(usize, usize)], pt: SPACE::Vector, edge: PolyEdge| {
+            let i = search_t(t, &uv, adjacent, pt);
+            t.insert(i, edge);
+        };
+
+
+    let peek_t_mut = |t: &'a mut Vec<PolyEdge>,
+                      adjacent: &[(usize, usize)],
+                      pt: SPACE::Vector|
+     -> Option<&'a mut PolyEdge> {
+        let ix = search_t(t, &uv, adjacent, pt);
+
+        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
+
+        Some(&mut t[ix])
+    };
+    */
+
+    //let pop_t_for_update = |t: &mut BTreeMap<SPACE::Scalar, PolyEdge>,
+    //                        adjacent: &[(usize, usize)],
+    //                        pt: SPACE::Vector|
+    // -> Option<(SPACE::Scalar, PolyEdge)> {
+    //    let edge = pop_t(t, pt)?;
+    //    let from_node = edge.from_node;
+    //    let (_, to_node) = adjacent[from_node];
+
+    //    let sweep_line = pt.join(SPACE::Vector::x_hat());
+    //    let edge_line = uv[from_node].join(uv[to_node]);
+
+    //    // TODO this unitized() can be removed in favor of using a homogeneous magnitude
+    //    let new_u = u(sweep_line.meet(edge_line).unitized());
+    //    Some((new_u, edge))
+    //};
 
     // Populate "next" and "prev" lists of nodes, from the graph
     let adjacent = {
@@ -434,10 +598,10 @@ where
         let (prev, next) = adjacent[i];
         let prev_pt = uv[prev];
         let next_pt = uv[next];
-        //println!("Point is {:?}", pt);
-        //println!("Prev is {:?}", prev_pt);
-        //println!("Next is {:?}", next_pt);
-        //println!("T is {:?}", t);
+        println!("*** Point {:?} is {:?} ***", i, pt);
+        println!("Prev is {:?}", prev_pt);
+        println!("Next is {:?}", next_pt);
+        println!("T is {:?}", t);
 
         let next_pt_below = match cmp_uv(next_pt, pt) {
             Ordering::Equal => panic!("Found coincident points"),
@@ -458,12 +622,12 @@ where
         if next_pt_below && prev_pt_below {
             if turn_direction >= anti_zero {
                 // This is a start vertex
-                //println!("This is a start vertex");
-                if let Some((k, v)) = pop_t_for_update(&mut t, &adjacent, pt) {
-                    t.insert(k, v);
-                }
-                t.insert(
-                    u(pt),
+                println!("This is a start vertex");
+                push_t(
+                    &mut t,
+                    &uv,
+                    &adjacent,
+                    pt,
                     PolyEdge {
                         from_node: i,
                         helper: i,
@@ -472,14 +636,22 @@ where
                 );
             } else {
                 // This is a split vertex
-                //println!("This is a split vertex");
-                let edge = pop_t(&mut t, pt).expect("No active edge found to the left of point");
-                // TODO ADD DIAGONAL
-                //println!("Draw diagonal {:?} to {:?}", i, edge.helper);
-                t.insert(
-                    u(pt),
+                println!("This is a split vertex");
+                {
+                    let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
+                        .expect("No active edge found to the left of point");
+                    graph.push_edge(i, edge.helper);
+                    graph.push_edge(edge.helper, i);
+                    edge.helper = i;
+                    edge.helper_is_merge = false;
+                }
+                push_t(
+                    &mut t,
+                    &uv,
+                    &adjacent,
+                    pt,
                     PolyEdge {
-                        from_node: edge.from_node,
+                        from_node: i,
                         helper: i,
                         helper_is_merge: false,
                     },
@@ -488,23 +660,25 @@ where
         } else if !next_pt_below && !prev_pt_below {
             if turn_direction > anti_zero {
                 // This is a end vertex
-                //println!("This is a end vertex");
-                let edge = pop_t(&mut t, pt).expect("No active edge found to the left of point");
+                println!("This is a end vertex");
+                let edge = pop_t(&mut t, &uv, &adjacent, pt)
+                    .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     graph.push_edge(i, edge.helper);
                     graph.push_edge(edge.helper, i);
                 }
             } else {
                 // This is a merge vertex
-                //println!("This is a merge vertex");
-                let edge = pop_t(&mut t, pt).expect("No active edge found to the left of point");
+                println!("This is a merge vertex");
+                let edge = pop_t(&mut t, &uv, &adjacent, pt)
+                    .expect("No active edge found to the left of point");
 
                 if edge.helper_is_merge {
                     graph.push_edge(i, edge.helper);
                     graph.push_edge(edge.helper, i);
                 }
 
-                let (k, mut edge) = pop_t_for_update(&mut t, &adjacent, pt)
+                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     graph.push_edge(i, edge.helper);
@@ -512,21 +686,24 @@ where
                 }
                 edge.helper = i;
                 edge.helper_is_merge = true;
-                t.insert(k, edge);
             }
         } else {
             // This is a normal vertex
             if is_on_left_chain(pt, next_pt) {
                 // This vertex lies on the left side of the interval
-                //println!("This is a normal left vertex");
-                let edge = pop_t(&mut t, pt).expect("No active edge found to the left of point");
+                println!("This is a normal left vertex");
+                let edge = pop_t(&mut t, &uv, &adjacent, pt)
+                    .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     // Walk the part of the polygon we are cutting off
                     graph.push_edge(i, edge.helper);
                     graph.push_edge(edge.helper, i);
                 }
-                t.insert(
-                    u(pt),
+                push_t(
+                    &mut t,
+                    &uv,
+                    &adjacent,
+                    pt,
                     PolyEdge {
                         from_node: i,
                         helper: i,
@@ -535,8 +712,8 @@ where
                 );
             } else {
                 // This vertex lies on the right side of the interval
-                //println!("This is a normal right vertex {:?}", pt);
-                let (k, mut edge) = pop_t_for_update(&mut t, &adjacent, pt)
+                println!("This is a normal right vertex {:?}", pt);
+                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     graph.push_edge(i, edge.helper);
@@ -544,7 +721,6 @@ where
                 }
                 edge.helper = i;
                 edge.helper_is_merge = false;
-                t.insert(k, edge);
             }
         }
     }
@@ -555,7 +731,11 @@ where
 pub fn triangulate_monotone_components<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut graph: Graph,
-) -> Graph {
+) -> Graph
+where
+    SPACE::Vector: Debug, // TEMP
+    SPACE::Scalar: Debug, // TEMP
+{
     let anti_zero = SPACE::AntiScalar::default();
 
     // Initialize an "unvisited" set
@@ -602,21 +782,49 @@ pub fn triangulate_monotone_components<SPACE: SpaceUv>(
                 monotone_poly_nodes[1],
                 is_on_left_chain(uv[monotone_poly_nodes[1]], uv[next[monotone_poly_nodes[1]]]),
             ));
+            println!(
+                "Push {:?} {:?}",
+                monotone_poly_nodes[0], uv[monotone_poly_nodes[0]]
+            );
+            println!(
+                "Push {:?} {:?} on the {}",
+                monotone_poly_nodes[1],
+                uv[monotone_poly_nodes[1]],
+                if is_on_left_chain(uv[monotone_poly_nodes[1]], uv[next[monotone_poly_nodes[1]]]) {
+                    "left"
+                } else {
+                    "right"
+                }
+            );
             for &node in &monotone_poly_nodes[2..monotone_poly_nodes.len() - 1] {
                 let is_left = is_on_left_chain(uv[node], uv[next[node]]);
+                println!(
+                    "Considering node {:?} {:?} on the {}",
+                    node,
+                    uv[node],
+                    if is_left { "left" } else { "right" }
+                );
                 let (mut s_top, mut s_top_is_left) =
-                    s.pop().expect("Stack empty during triangulaton?");
+                    s.pop().expect("Stack empty during triangulation?");
                 if s_top_is_left != is_left {
                     // Different chains
-                    while !s.is_empty() {
+                    println!("Different chain");
+                    println!("Add diagonal {:?} to {:?}", node, s_top);
+                    graph.push_edge(node, s_top);
+                    graph.push_edge(s_top, node);
+                    while s.len() > 1 {
+                        let (s_top, _) = s.pop().unwrap();
+
                         // Add an edge to all nodes on the stack,
                         // except the last one
+                        println!("Add diagonal {:?} to {:?}", node, s_top);
                         graph.push_edge(node, s_top);
                         graph.push_edge(s_top, node);
-                        (s_top, s_top_is_left) = s.pop().unwrap();
                     }
+                    s.pop().expect("Stack empty during triangulation?"); // Discard last stack element
                 } else {
                     // Same chain
+                    println!("Same chain");
                     loop {
                         let Some((s_penultimate, s_penultimate_is_left)) = s.pop() else {
                             break;
@@ -631,12 +839,24 @@ pub fn triangulate_monotone_components<SPACE: SpaceUv>(
 
                         (s_top, s_top_is_left) = (s_penultimate, s_penultimate_is_left);
 
+                        println!("Add diagonal {:?} to {:?}", node, s_top);
                         graph.push_edge(node, s_top);
                         graph.push_edge(s_top, node);
                     }
                 }
                 s.push((s_top, s_top_is_left));
                 s.push((node, is_left));
+                println!("Stack is now {:?}", s);
+            }
+
+            // Last node: Add edges to all remaining nodes in the stack,
+            // except the last one
+            let &node = monotone_poly_nodes.last().unwrap();
+            println!("Handling last node: {:?} {:?}", node, uv[node]);
+            for &(s_entry, _) in &s[1..s.len() - 1] {
+                println!("Add diagonal {:?} to {:?}", node, s_entry);
+                graph.push_edge(node, s_entry);
+                graph.push_edge(s_entry, node);
             }
         }
     }
@@ -652,17 +872,35 @@ pub fn graph_to_triangles(mut graph: Graph) -> Vec<[usize; 3]> {
     while let Some(node1) = unvisited_nodes.pop_first() {
         // Walk a single monotone polygon from the graph
 
+        println!("*TRI*");
+        println!("Node 1: {:?}", node1);
+
         let next_edge = graph
             .pop_edge(node1)
             .expect("Bad manifold--no outgoing edge");
         let node2 = graph.edges[next_edge].to;
         assert!(node2 != node1, "Graph has a 1-cycle");
 
+        println!("Node 2: {:?}", node2);
+
         let next_edge = graph
             .pop_edge(node2)
             .expect("Bad manifold--no outgoing edge");
-        let node3 = graph.edges[next_edge].to;
-        assert!(node3 != node1, "Graph has a 2-cycle");
+        let mut node3 = graph.edges[next_edge].to;
+
+        if node3 == node1 {
+            let reflex = node3;
+
+            // Pop a different edge
+            let next_edge = graph
+                .pop_edge(node2)
+                .expect("Bad manifold--no outgoing edge");
+            node3 = graph.edges[next_edge].to;
+            // Put back the reflex edge
+            graph.push_edge(node2, reflex);
+        }
+
+        println!("Node 3: {:?}", node3);
 
         let next_edge = graph
             .pop_edge(node3)
@@ -671,6 +909,8 @@ pub fn graph_to_triangles(mut graph: Graph) -> Vec<[usize; 3]> {
             node1 == graph.edges[next_edge].to,
             "Graph has a >3 cycle (not fully triangulated)"
         );
+
+        println!("OK");
 
         unvisited_nodes.remove(&node1);
         unvisited_nodes.remove(&node2);
@@ -681,11 +921,16 @@ pub fn graph_to_triangles(mut graph: Graph) -> Vec<[usize; 3]> {
     triangles
 }
 
-#[test]
-fn test_triangulate() {
+#[cfg(test)]
+mod tests {
     use derive_more::*;
     use ngeom::ops::*;
     use ngeom::re2::{AntiEven, AntiScalar, Bivector, Vector};
+    use ngeom::scalar::*;
+    use std::cmp::Ordering;
+    use std::ops::Index as StdIndex;
+
+    use super::*;
 
     // TYPES SETUP
 
@@ -868,44 +1113,269 @@ fn test_triangulate() {
         //    self.0.iter().filter(move |e| e.start == vi)
         //}
     }
-    // DATA
 
-    let vertices = VecVertex(vec![
-        Vector::point([R32(0.), R32(0.)]),
-        Vector::point([R32(1.), R32(0.)]),
-        Vector::point([R32(0.), R32(1.)]),
-    ]);
+    #[test]
+    fn test_make_monotone_already_monotone() {
+        {
+            // Triangle
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(0.), R32(1.)]),
+            ];
 
-    let edges = VecEdge(vec![
-        Edge::Line(Line { start: 0, end: 1 }),
-        //Edge::Arc(Arc {
-        //    start: 1,
-        //    axis: Vector::point([R32(0.), R32(0.)]),
-        //    end_angle: R32(std::f32::consts::TAU / 8.),
-        //    end: 2,
-        //}),
-        Edge::Line(Line { start: 1, end: 2 }),
-        Edge::Line(Line { start: 2, end: 3 }),
-    ]);
+            let mut graph = Graph::new();
+            graph.push_loop(3);
 
-    let boundary = FaceBoundary {
-        edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
-    };
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
+            assert_eq!(graph, new_graph);
+        }
 
-    let faces = VecFace(vec![Face {
-        boundaries: vec![boundary],
-    }]);
+        {
+            // Square
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+            ];
 
-    let Interpolation {
-        points: _,
-        uv,
-        graph,
-    } = interpolate(&vertices, &edges, &faces, |pt| pt);
+            let mut graph = Graph::new();
+            graph.push_loop(4);
 
-    let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
-    let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-    let triangles = graph_to_triangles(graph);
-    println!("{:?}", triangles);
-    //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
-    //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
+            assert_eq!(graph, new_graph);
+        }
+
+        {
+            // Square with redundant edge points
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(0.5), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.5)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.5), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+                Vector::point([R32(0.), R32(0.5)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(8);
+
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
+            assert_eq!(graph, new_graph);
+        }
+    }
+
+    #[test]
+    fn test_make_monotone_comb() {
+        {
+            // Three-pointed comb like this: /\/\/\
+            let uv = vec![
+                Vector::point([R32(6.), R32(0.)]),
+                Vector::point([R32(5.), R32(1.)]),
+                Vector::point([R32(4.), R32(0.5)]),
+                Vector::point([R32(3.), R32(1.)]),
+                Vector::point([R32(2.), R32(0.5)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(0.)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(7);
+
+            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            // Two diagonals should have been added for a total of 4 more graph edges
+            assert_eq!(graph.edges.len(), 11);
+        }
+
+        {
+            // Upside-down three-pointed comb like this: \/\/\/
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(-1.)]),
+                Vector::point([R32(2.), R32(-0.5)]),
+                Vector::point([R32(3.), R32(-1.)]),
+                Vector::point([R32(4.), R32(-0.5)]),
+                Vector::point([R32(5.), R32(-1.)]),
+                Vector::point([R32(6.), R32(0.)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(7);
+
+            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            // Two diagonals should have been added for a total of 4 more graph edges
+            assert_eq!(graph.edges.len(), 11);
+        }
+    }
+
+    #[test]
+    fn test_make_monotone_square_hole() {
+        {
+            // Square
+            let uv = vec![
+                // Outside
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+                // Hole
+                Vector::point([R32(0.25), R32(0.75)]),
+                Vector::point([R32(0.75), R32(0.75)]),
+                Vector::point([R32(0.75), R32(0.25)]),
+                Vector::point([R32(0.25), R32(0.25)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(4);
+            graph.push_loop(4);
+
+            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            // Two diagonals should have been added for a total of 4 more graph edges
+            assert_eq!(graph.edges.len(), 12);
+        }
+    }
+
+    #[test]
+    fn test_make_monotone_multiple_shapes() {
+        // Square
+        let uv = vec![
+            // Outside
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            // Hole
+            Vector::point([R32(0.25), R32(0.75)]),
+            Vector::point([R32(0.75), R32(0.75)]),
+            Vector::point([R32(0.75), R32(0.25)]),
+            Vector::point([R32(0.25), R32(0.25)]),
+            // Second square outside
+            Vector::point([R32(2.), R32(0.)]),
+            Vector::point([R32(3.), R32(0.)]),
+            Vector::point([R32(3.), R32(1.)]),
+            Vector::point([R32(2.), R32(1.)]),
+            // Second square hole
+            Vector::point([R32(2.25), R32(0.75)]),
+            Vector::point([R32(2.75), R32(0.75)]),
+            Vector::point([R32(2.75), R32(0.25)]),
+            Vector::point([R32(2.25), R32(0.25)]),
+        ];
+
+        let mut graph = Graph::new();
+        graph.push_loop(4);
+        graph.push_loop(4);
+        graph.push_loop(4);
+        graph.push_loop(4);
+
+        let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+        // Four diagonals should have been added for a total of 8 more graph edges
+        assert_eq!(graph.edges.len(), 24);
+
+        // TODO make sure no diagonals go from the first shape (vertices 0-8) to the second shape (vertices 8-16)
+    }
+
+    #[test]
+    fn test_triangulate_simple_shapes() {
+        {
+            // Triangle
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(0.), R32(1.)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(3);
+
+            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+            let tri = graph_to_triangles(graph);
+            assert_eq!(tri.len(), 1);
+        }
+
+        {
+            // Square
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(4);
+
+            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+            println!("TRIANGULATE: {:?}", graph);
+            let tri = graph_to_triangles(graph);
+            assert_eq!(tri.len(), 2);
+        }
+
+        {
+            // Square with redundant edge points
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(0.5), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.5)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.5), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+                Vector::point([R32(0.), R32(0.5)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(8);
+
+            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+            println!("TRIANGULATE: {:?}", graph);
+            let tri = graph_to_triangles(graph);
+            assert_eq!(tri.len(), 6);
+        }
+    }
+
+    #[test]
+    fn test_triangulate() {
+        // DATA
+        let vertices = VecVertex(vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(0.), R32(1.)]),
+        ]);
+
+        let edges = VecEdge(vec![
+            Edge::Line(Line { start: 0, end: 1 }),
+            Edge::Arc(Arc {
+                start: 1,
+                axis: Vector::point([R32(0.), R32(0.)]),
+                end_angle: R32(std::f32::consts::TAU / 8.),
+                end: 2,
+            }),
+            //Edge::Line(Line { start: 1, end: 2 }),
+            Edge::Line(Line { start: 2, end: 3 }),
+        ]);
+
+        let boundary = FaceBoundary {
+            edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
+        };
+
+        let faces = VecFace(vec![Face {
+            boundaries: vec![boundary],
+        }]);
+
+        let Interpolation {
+            points: _,
+            uv,
+            graph,
+        } = interpolate(&vertices, &edges, &faces, |pt| pt);
+
+        let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+        let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+        let triangles = graph_to_triangles(graph);
+        println!("{:?}", triangles);
+        //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
+        //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
+    }
 }
