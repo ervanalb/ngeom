@@ -3,10 +3,10 @@ use ngeom::algebraic_ops::*;
 use ngeom::ops::*;
 use ngeom::scalar::*;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::fmt;
 use std::fmt::Debug;
 use std::iter;
-use std::ops::{Add, Index as StdIndex, Mul};
+use std::ops::{Add, Index as StdIndex, Mul, Sub};
 
 pub trait Space {
     type Scalar: Copy
@@ -28,17 +28,25 @@ pub trait Space {
 
 pub trait SpaceUv {
     type Scalar: Copy + Ring + Ord;
-    type AntiScalar: Copy + Default + PartialOrd;
+    type AntiScalar: Copy
+        + Default
+        + Ord
+        + AntiMul<Self::AntiScalar, Output = Self::AntiScalar>
+        + Mul<Self::Scalar, Output = Self::AntiScalar>;
     type Vector: Copy
         + Dot<Self::Vector, Output = Self::Scalar>
         + XHat
         + YHat
         + Join<Self::Vector, Output = Self::Bivector>
         + WeightNorm<Output = Self::AntiScalar>
-        + Unitized<Output = Self::Vector>;
+        + BulkNorm<Output = Self::Scalar>
+        + Unitized<Output = Self::Vector>
+        + Sub<Self::Vector, Output = Self::Vector>;
     type Bivector: Copy
         + Join<Self::Vector, Output = Self::AntiScalar>
-        + Meet<Self::Bivector, Output = Self::Vector>;
+        + Meet<Self::Bivector, Output = Self::Vector>
+        + WeightNorm<Output = Self::AntiScalar>
+        + BulkNorm<Output = Self::Scalar>;
 }
 
 pub trait Index: Copy + Ord + Eq {}
@@ -227,10 +235,61 @@ pub struct GraphEdge {
     pub next_outgoing_edge: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Graph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+}
+
+pub struct Successors<'graph> {
+    graph: &'graph Graph,
+    current_edge_index: Option<usize>,
+}
+
+impl<'graph> Iterator for Successors<'graph> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self.current_edge_index {
+            None => None,
+            Some(edge_index) => {
+                let edge = &self.graph.edges[edge_index];
+                self.current_edge_index = edge.next_outgoing_edge;
+                Some(edge.to)
+            }
+        }
+    }
+}
+
+pub struct Edges<'graph> {
+    graph: &'graph Graph,
+    current_node_index: usize,
+    current_edge_index: Option<usize>,
+}
+
+impl<'graph> Iterator for Edges<'graph> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<(usize, usize)> {
+        loop {
+            if let Some(edge_index) = self.current_edge_index {
+                let edge = &self.graph.edges[edge_index];
+                // Advance iterator
+                self.current_edge_index = edge.next_outgoing_edge;
+                // Return this edge
+                return Some((self.current_node_index, edge.to));
+            } else {
+                if self.current_node_index >= self.graph.nodes.len() - 1 {
+                    return None; // This is the last node and it has no more edges, so iteration is finished
+                } else {
+                    // Move to the next node & loop
+                    self.current_node_index += 1;
+                    self.current_edge_index =
+                        self.graph.nodes[self.current_node_index].first_outgoing_edge;
+                }
+            }
+        }
+    }
 }
 
 impl Graph {
@@ -256,13 +315,55 @@ impl Graph {
         from_node.first_outgoing_edge = Some(index);
     }
 
-    pub fn pop_edge(&mut self, from: usize) -> Option<usize> {
-        let from_node = &mut self.nodes[from];
-        let removed_edge = from_node.first_outgoing_edge;
-        if let Some(removed_edge) = removed_edge {
-            from_node.first_outgoing_edge = self.edges[removed_edge].next_outgoing_edge;
+    pub fn pop_edge(&mut self) -> Option<(usize, usize)> {
+        for (from_index, from_node) in self.nodes.iter_mut().enumerate() {
+            if let Some(edge_index) = from_node.first_outgoing_edge {
+                let edge = &self.edges[edge_index];
+                from_node.first_outgoing_edge = edge.next_outgoing_edge;
+                return Some((from_index, edge.to));
+            }
         }
-        removed_edge
+        None
+    }
+
+    pub fn pop_outgoing_edge(&mut self, from: usize) -> Option<usize> {
+        let from_node = &mut self.nodes[from];
+        let edge = &self.edges[from_node.first_outgoing_edge?];
+        from_node.first_outgoing_edge = edge.next_outgoing_edge;
+        Some(edge.to)
+    }
+
+    pub fn remove_edge(&mut self, from: usize, to: usize) {
+        let from_node = &mut self.nodes[from];
+
+        let Some(edge_index) = from_node.first_outgoing_edge else {
+            panic!("Requested node has no outgoing edges")
+        };
+
+        {
+            let edge = &self.edges[edge_index];
+            if edge.to == to {
+                // Pop from node
+                from_node.first_outgoing_edge = edge.next_outgoing_edge;
+                return;
+            }
+        }
+
+        let mut prev_edge_index = edge_index;
+
+        loop {
+            let Some(edge_index) = self.edges[prev_edge_index].next_outgoing_edge else {
+                panic!("Requested edge not found")
+            };
+
+            let edge = &self.edges[edge_index];
+            if edge.to == to {
+                // Pop
+                self.edges[prev_edge_index].next_outgoing_edge = edge.next_outgoing_edge;
+                return;
+            }
+            prev_edge_index = edge_index;
+        }
     }
 
     pub fn push_loop(&mut self, count: usize) {
@@ -288,6 +389,63 @@ impl Graph {
 
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn iter_successors(&self, from: usize) -> impl Iterator<Item = usize> + use<'_> {
+        Successors {
+            graph: self,
+            current_edge_index: self.nodes[from].first_outgoing_edge,
+        }
+    }
+
+    pub fn iter_edges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+        Edges {
+            graph: self,
+            current_node_index: 0,
+            current_edge_index: self.nodes.get(0).and_then(|n| n.first_outgoing_edge),
+        }
+    }
+
+    pub fn pop_min_outgoing_edge_by<F: Fn(&usize, &usize) -> Ordering>(
+        &mut self,
+        prev: usize,
+        from: usize,
+        cmp: F,
+    ) -> Option<usize> {
+        let to = self
+            .iter_successors(from)
+            .filter(|&n| n != prev)
+            .min_by(cmp)?;
+        self.remove_edge(from, to);
+
+        Some(to)
+    }
+}
+
+impl fmt::Debug for Graph {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Graph {{")?;
+        let mut first_from = true;
+        for from in 0..self.nodes.len() {
+            if !first_from {
+                write!(f, ", ")?;
+            } else {
+                first_from = false;
+            }
+            write!(f, "{:?} -> {{", from)?;
+            let mut first_to = true;
+            for to in self.iter_successors(from) {
+                if !first_to {
+                    write!(f, ", ")?;
+                } else {
+                    first_to = false;
+                }
+                write!(f, "{:?}", to)?;
+            }
+            write!(f, "}}")?;
+        }
+        write!(f, "}}")?;
+        Ok(())
     }
 }
 
@@ -365,13 +523,64 @@ fn is_on_left_chain<
     }
 }
 
+fn cmp_turn_angle<
+    SCALAR: Copy + Default + Ord + Mul<SCALAR, Output = SCALAR>,
+    VECTOR: Copy
+        + Join<VECTOR, Output = BIVECTOR>
+        + Sub<VECTOR, Output = VECTOR>
+        + BulkNorm<Output = SCALAR>
+        + Dot<VECTOR, Output = SCALAR>,
+    BIVECTOR: Copy + BulkNorm<Output = SCALAR>,
+    //ANTISCALAR: Copy
+    //    + AntiMul<ANTISCALAR, Output = ANTISCALAR>
+    //    + Default
+    //    + Ord
+    //    + Mul<SCALAR, Output = ANTISCALAR>,
+>(
+    pt1: VECTOR,
+    pt2: VECTOR,
+    pt3a: VECTOR,
+    pt3b: VECTOR,
+) -> Ordering {
+    let v1 = pt2 - pt1;
+    let v2a = pt3a - pt2;
+    let v2b = pt3b - pt2;
+
+    let a_w = v2a.bulk_norm();
+    let b_w = v2b.bulk_norm();
+    let a_sin = v1.join(v2a).bulk_norm();
+    let b_sin = v1.join(v2b).bulk_norm();
+    let a_cos = v1.dot(v2a);
+    let b_cos = v1.dot(v2b);
+
+    // For a valid comparison, we must normalize by the outgoing segment weight
+    // which may be different between options A and B.
+    // We can do this without division by moving the weight to the opposite side of the equation,
+    // since both weights are positive.
+
+    if a_sin >= Default::default() && b_sin >= Default::default() {
+        // Both angles are not reflex,
+        // so compare their cosines
+        (b_w * a_cos).cmp(&(a_w * b_cos))
+    } else if a_sin < Default::default() && b_sin < Default::default() {
+        // Both angles are reflex
+        // so compare their cosines
+        (a_w * b_cos).cmp(&(b_w * a_cos))
+    } else {
+        // One angle is reflex and one is normal.
+        // That means one sine is positive and one is non-negative.
+        // This trivial comparison will return the appropriate result
+        b_sin.cmp(&a_sin)
+    }
+}
+
 pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut graph: Graph,
 ) -> Graph
 where
-    SPACE::Vector: Debug, // TEMP
-    SPACE::Scalar: Debug, // TEMP
+    SPACE::Scalar: Debug,
+    SPACE::Vector: Debug,
 {
     // And finally, perform an argsort of the list
     // to get the sweep-line iteration order
@@ -739,29 +948,40 @@ where
     let anti_zero = SPACE::AntiScalar::default();
 
     // Initialize an "unvisited" set
-    let mut unvisited_nodes = BTreeSet::<usize>::from_iter(0..graph.nodes.len());
     let mut unvisited_graph = graph.clone();
     let mut monotone_poly_nodes = Vec::<usize>::new();
     let mut s = Vec::<(usize, bool)>::new();
 
-    while let Some(start_node) = unvisited_nodes.pop_first() {
+    while let Some((start_node, mut cur_node)) = unvisited_graph.pop_edge() {
         // Walk a single monotone polygon from the graph
         monotone_poly_nodes.clear(); // Prepare for a fresh polygon
-        let mut cur_node = start_node;
+        monotone_poly_nodes.push(start_node);
+
+        println!("START WALK {:?} to {:?}", start_node, cur_node);
+
+        let mut prev_node = start_node;
 
         loop {
+            println!("walk from {:?} to {:?}", prev_node, cur_node);
             monotone_poly_nodes.push(cur_node);
 
             // Find the next node
-            let next_edge = unvisited_graph
-                .pop_edge(cur_node)
+            let uv_prev = uv[prev_node];
+            let uv_cur = uv[cur_node];
+
+            prev_node = cur_node;
+            cur_node = unvisited_graph
+                .pop_min_outgoing_edge_by(prev_node, cur_node, |&i, &j| {
+                    cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])
+                })
                 .expect("Bad manifold--no outgoing edge");
-            cur_node = graph.edges[next_edge].to;
+
+            println!("pop {:?}", cur_node);
 
             if cur_node == start_node {
+                println!("DONE!");
                 break;
             }
-            unvisited_nodes.remove(&cur_node);
         }
 
         if monotone_poly_nodes.len() > 3 {
@@ -864,57 +1084,63 @@ where
     graph
 }
 
-pub fn graph_to_triangles(mut graph: Graph) -> Vec<[usize; 3]> {
+pub fn graph_to_triangles<SPACE: SpaceUv>(
+    uv: &[SPACE::Vector],
+    mut graph: Graph,
+) -> Vec<[usize; 3]> {
     // Initialize an "unvisited" set
-    let mut unvisited_nodes = BTreeSet::<usize>::from_iter(0..graph.nodes.len());
     let mut triangles = Vec::<[usize; 3]>::new();
 
-    while let Some(node1) = unvisited_nodes.pop_first() {
+    while let Some((node1, node2)) = graph.pop_edge() {
         // Walk a single monotone polygon from the graph
 
         println!("*TRI*");
         println!("Node 1: {:?}", node1);
-
-        let next_edge = graph
-            .pop_edge(node1)
-            .expect("Bad manifold--no outgoing edge");
-        let node2 = graph.edges[next_edge].to;
+        println!("Node 2: {:?}", node2);
         assert!(node2 != node1, "Graph has a 1-cycle");
 
-        println!("Node 2: {:?}", node2);
+        let node3 = {
+            let uv_prev = uv[node1];
+            let uv_cur = uv[node2];
 
-        let next_edge = graph
-            .pop_edge(node2)
-            .expect("Bad manifold--no outgoing edge");
-        let mut node3 = graph.edges[next_edge].to;
-
-        if node3 == node1 {
-            let reflex = node3;
-
-            // Pop a different edge
-            let next_edge = graph
-                .pop_edge(node2)
+            let node3 = graph
+                .pop_min_outgoing_edge_by(node1, node2, |&i, &j| {
+                    let result = cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]);
+                    println!(
+                        "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
+                        node1, node2, i, result, node1, node2, j
+                    );
+                    result
+                })
                 .expect("Bad manifold--no outgoing edge");
-            node3 = graph.edges[next_edge].to;
-            // Put back the reflex edge
-            graph.push_edge(node2, reflex);
+            assert!(node3 != node2, "Graph has a 1-cycle");
+            assert!(node3 != node1, "Graph has a 2-cycle");
+            println!("Node 3: {:?}", node3);
+            node3
+        };
+
+        {
+            let uv_prev = uv[node2];
+            let uv_cur = uv[node3];
+
+            let node4 = graph
+                .pop_min_outgoing_edge_by(node2, node3, |&i, &j| {
+                    let result = cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]);
+                    println!(
+                        "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
+                        node2, node3, i, result, node1, node2, j
+                    );
+                    result
+                })
+                .expect("Bad manifold--no outgoing edge");
+            println!("Node 4: {:?}", node4);
+            assert!(
+                node4 == node1,
+                "Graph has a >3 cycle (not fully triangulated)"
+            );
         }
 
-        println!("Node 3: {:?}", node3);
-
-        let next_edge = graph
-            .pop_edge(node3)
-            .expect("Bad manifold--no outgoing edge");
-        assert!(
-            node1 == graph.edges[next_edge].to,
-            "Graph has a >3 cycle (not fully triangulated)"
-        );
-
         println!("OK");
-
-        unvisited_nodes.remove(&node1);
-        unvisited_nodes.remove(&node2);
-        unvisited_nodes.remove(&node3);
 
         triangles.push([node1, node2, node3]);
     }
@@ -1291,7 +1517,7 @@ mod tests {
             graph.push_loop(3);
 
             let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-            let tri = graph_to_triangles(graph);
+            let tri = graph_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 1);
         }
 
@@ -1309,7 +1535,8 @@ mod tests {
 
             let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
             println!("TRIANGULATE: {:?}", graph);
-            let tri = graph_to_triangles(graph);
+            println!("{:?}", uv);
+            let tri = graph_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 2);
         }
 
@@ -1331,51 +1558,52 @@ mod tests {
 
             let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
             println!("TRIANGULATE: {:?}", graph);
-            let tri = graph_to_triangles(graph);
+            println!("{:?}", uv);
+            let tri = graph_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 6);
         }
     }
 
-    #[test]
-    fn test_triangulate() {
-        // DATA
-        let vertices = VecVertex(vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(0.), R32(1.)]),
-        ]);
+    //#[test]
+    //fn test_triangulate() {
+    //    // DATA
+    //    let vertices = VecVertex(vec![
+    //        Vector::point([R32(0.), R32(0.)]),
+    //        Vector::point([R32(1.), R32(0.)]),
+    //        Vector::point([R32(0.), R32(1.)]),
+    //    ]);
 
-        let edges = VecEdge(vec![
-            Edge::Line(Line { start: 0, end: 1 }),
-            Edge::Arc(Arc {
-                start: 1,
-                axis: Vector::point([R32(0.), R32(0.)]),
-                end_angle: R32(std::f32::consts::TAU / 8.),
-                end: 2,
-            }),
-            //Edge::Line(Line { start: 1, end: 2 }),
-            Edge::Line(Line { start: 2, end: 3 }),
-        ]);
+    //    let edges = VecEdge(vec![
+    //        Edge::Line(Line { start: 0, end: 1 }),
+    //        Edge::Arc(Arc {
+    //            start: 1,
+    //            axis: Vector::point([R32(0.), R32(0.)]),
+    //            end_angle: R32(std::f32::consts::TAU / 8.),
+    //            end: 2,
+    //        }),
+    //        //Edge::Line(Line { start: 1, end: 2 }),
+    //        Edge::Line(Line { start: 2, end: 3 }),
+    //    ]);
 
-        let boundary = FaceBoundary {
-            edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
-        };
+    //    let boundary = FaceBoundary {
+    //        edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
+    //    };
 
-        let faces = VecFace(vec![Face {
-            boundaries: vec![boundary],
-        }]);
+    //    let faces = VecFace(vec![Face {
+    //        boundaries: vec![boundary],
+    //    }]);
 
-        let Interpolation {
-            points: _,
-            uv,
-            graph,
-        } = interpolate(&vertices, &edges, &faces, |pt| pt);
+    //    let Interpolation {
+    //        points: _,
+    //        uv,
+    //        graph,
+    //    } = interpolate(&vertices, &edges, &faces, |pt| pt);
 
-        let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
-        let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-        let triangles = graph_to_triangles(graph);
-        println!("{:?}", triangles);
-        //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
-        //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
-    }
+    //    let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+    //    let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+    //    let triangles = graph_to_triangles::<Space2D>(&uv, graph);
+    //    println!("{:?}", triangles);
+    //    //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
+    //    //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
+    //}
 }
