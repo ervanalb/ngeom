@@ -3,10 +3,11 @@ use ngeom::algebraic_ops::*;
 use ngeom::ops::*;
 use ngeom::scalar::*;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::Debug;
-use std::iter;
-use std::ops::{Add, Index as StdIndex, Mul, Sub};
+use std::iter::Iterator;
+use std::ops::{Add, Bound, Index as StdIndex, Mul, RangeBounds, Sub};
 
 pub trait Space {
     type Scalar: Copy
@@ -224,225 +225,91 @@ pub enum PatchTopologyError {
     Branching,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct GraphNode {
-    pub first_outgoing_edge: Option<usize>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct GraphEdge {
-    pub to: usize,
-    pub next_outgoing_edge: Option<usize>,
-}
-
 #[derive(Clone, Default, PartialEq, Eq)]
-pub struct Graph {
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
-}
+pub struct EdgeSet(BTreeSet<(usize, usize)>);
 
-pub struct Successors<'graph> {
-    graph: &'graph Graph,
-    current_edge_index: Option<usize>,
-}
-
-impl<'graph> Iterator for Successors<'graph> {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        match self.current_edge_index {
-            None => None,
-            Some(edge_index) => {
-                let edge = &self.graph.edges[edge_index];
-                self.current_edge_index = edge.next_outgoing_edge;
-                Some(edge.to)
-            }
-        }
+impl EdgeSet {
+    pub fn new() -> Self {
+        EdgeSet(BTreeSet::new())
     }
-}
-
-pub struct Edges<'graph> {
-    graph: &'graph Graph,
-    current_node_index: usize,
-    current_edge_index: Option<usize>,
-}
-
-impl<'graph> Iterator for Edges<'graph> {
-    type Item = (usize, usize);
-
-    fn next(&mut self) -> Option<(usize, usize)> {
-        loop {
-            if let Some(edge_index) = self.current_edge_index {
-                let edge = &self.graph.edges[edge_index];
-                // Advance iterator
-                self.current_edge_index = edge.next_outgoing_edge;
-                // Return this edge
-                return Some((self.current_node_index, edge.to));
-            } else {
-                if self.current_node_index >= self.graph.nodes.len() - 1 {
-                    return None; // This is the last node and it has no more edges, so iteration is finished
-                } else {
-                    // Move to the next node & loop
-                    self.current_node_index += 1;
-                    self.current_edge_index =
-                        self.graph.nodes[self.current_node_index].first_outgoing_edge;
-                }
-            }
-        }
+    pub fn insert(&mut self, from: usize, to: usize) -> bool {
+        self.0.insert((from, to))
     }
-}
-
-impl Graph {
-    pub fn add_node(&mut self) -> usize {
-        let index = self.nodes.len();
-        self.nodes.push(Default::default());
-        index
+    pub fn remove(&mut self, from: usize, to: usize) -> bool {
+        self.0.remove(&(from, to))
     }
-
-    pub fn add_nodes(&mut self, count: usize) {
-        self.nodes.reserve(count);
-        self.nodes
-            .extend(iter::repeat(Default::default()).take(count));
+    pub fn pop(&mut self) -> Option<(usize, usize)> {
+        self.0.pop_last()
     }
-
-    pub fn push_edge(&mut self, from: usize, to: usize) {
-        let index = self.edges.len();
-        let from_node = &mut self.nodes[from];
-        self.edges.push(GraphEdge {
-            to,
-            next_outgoing_edge: from_node.first_outgoing_edge,
-        });
-        from_node.first_outgoing_edge = Some(index);
-    }
-
-    pub fn pop_edge(&mut self) -> Option<(usize, usize)> {
-        for (from_index, from_node) in self.nodes.iter_mut().enumerate() {
-            if let Some(edge_index) = from_node.first_outgoing_edge {
-                let edge = &self.edges[edge_index];
-                from_node.first_outgoing_edge = edge.next_outgoing_edge;
-                return Some((from_index, edge.to));
-            }
-        }
-        None
-    }
-
-    pub fn pop_outgoing_edge(&mut self, from: usize) -> Option<usize> {
-        let from_node = &mut self.nodes[from];
-        let edge = &self.edges[from_node.first_outgoing_edge?];
-        from_node.first_outgoing_edge = edge.next_outgoing_edge;
-        Some(edge.to)
-    }
-
-    pub fn remove_edge(&mut self, from: usize, to: usize) {
-        let from_node = &mut self.nodes[from];
-
-        let Some(edge_index) = from_node.first_outgoing_edge else {
-            panic!("Requested node has no outgoing edges")
+    pub fn insert_loop(&mut self, range: impl RangeBounds<usize>) {
+        let start = match range.start_bound() {
+            Bound::Included(&value) => value,
+            Bound::Excluded(&value) => value + 1,
+            Bound::Unbounded => panic!("Cannot add unbounded loop"),
         };
+        let end = match range.end_bound() {
+            Bound::Included(&value) => value + 1,
+            Bound::Excluded(&value) => value,
+            Bound::Unbounded => panic!("Cannot add unbounded loop"),
+        };
+        let end = start.max(end);
 
-        {
-            let edge = &self.edges[edge_index];
-            if edge.to == to {
-                // Pop from node
-                from_node.first_outgoing_edge = edge.next_outgoing_edge;
-                return;
-            }
-        }
-
-        let mut prev_edge_index = edge_index;
-
-        loop {
-            let Some(edge_index) = self.edges[prev_edge_index].next_outgoing_edge else {
-                panic!("Requested edge not found")
-            };
-
-            let edge = &self.edges[edge_index];
-            if edge.to == to {
-                // Pop
-                self.edges[prev_edge_index].next_outgoing_edge = edge.next_outgoing_edge;
-                return;
-            }
-            prev_edge_index = edge_index;
-        }
-    }
-
-    pub fn push_loop(&mut self, count: usize) {
-        let start = self.nodes.len();
-        let end = start + count;
-
-        self.add_nodes(count);
-        self.edges.reserve(count);
-
-        match count {
+        match end - start {
             0 => {}
             1 => {
-                self.push_edge(start, start);
+                self.insert(start, start);
             }
             _ => {
                 for i in start..end - 1 {
-                    self.push_edge(i, i + 1)
+                    self.insert(i, i + 1);
                 }
-                self.push_edge(end - 1, start);
+                self.insert(end - 1, start);
             }
         }
-    }
-
-    pub fn new() -> Self {
-        Self::default()
     }
 
     pub fn iter_successors(&self, from: usize) -> impl Iterator<Item = usize> + use<'_> {
-        Successors {
-            graph: self,
-            current_edge_index: self.nodes[from].first_outgoing_edge,
-        }
+        self.0
+            .range((from, 0)..=(from, std::usize::MAX))
+            .map(|&(_, t)| t)
     }
 
-    pub fn iter_edges(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
-        Edges {
-            graph: self,
-            current_node_index: 0,
-            current_edge_index: self.nodes.get(0).and_then(|n| n.first_outgoing_edge),
-        }
+    pub fn pop_first_outgoing(&mut self, from: usize) -> Option<usize> {
+        let to = self.iter_successors(from).next()?;
+        self.remove(from, to);
+        Some(to)
     }
 
-    pub fn pop_min_outgoing_edge_by<F: Fn(&usize, &usize) -> Ordering>(
+    pub fn pop_min_outgoing_by<F: Fn(&usize, &usize) -> Ordering>(
         &mut self,
-        prev: usize,
         from: usize,
         cmp: F,
     ) -> Option<usize> {
-        let to = self
-            .iter_successors(from)
-            .filter(|&n| n != prev)
-            .min_by(cmp)?;
-        self.remove_edge(from, to);
-
+        let to = self.iter_successors(from).min_by(cmp)?;
+        self.remove(from, to);
         Some(to)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
+        self.0.iter().cloned()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
-impl fmt::Debug for Graph {
+impl fmt::Debug for EdgeSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Graph {{")?;
-        let mut first_from = true;
-        for from in 0..self.nodes.len() {
-            if !first_from {
+        write!(f, "EdgeSet {{")?;
+        let mut first_edge = true;
+        for &(from, to) in self.0.iter() {
+            if !first_edge {
                 write!(f, ", ")?;
             } else {
-                first_from = false;
+                first_edge = false;
             }
-            write!(f, "{:?} -> {{", from)?;
-            let mut first_to = true;
-            for to in self.iter_successors(from) {
-                if !first_to {
-                    write!(f, ", ")?;
-                } else {
-                    first_to = false;
-                }
-                write!(f, "{:?}", to)?;
-            }
-            write!(f, "}}")?;
+            write!(f, "{:?} -> {:?}", from, to)?;
         }
         write!(f, "}}")?;
         Ok(())
@@ -452,7 +319,7 @@ impl fmt::Debug for Graph {
 pub struct Interpolation<POINT, UV> {
     pub points: Vec<POINT>,
     pub uv: Vec<UV>,
-    pub graph: Graph,
+    pub edges: EdgeSet,
 }
 
 pub fn interpolate<
@@ -470,7 +337,7 @@ pub fn interpolate<
     // First, interpolate the boundaries of the faces
     // and store their connectivity
     let mut points = Vec::<<VC::Space as Space>::Vector>::new();
-    let mut graph = Graph::new();
+    let mut polyedges = EdgeSet::new();
 
     for face in faces.iter() {
         for boundary in face.boundaries.iter() {
@@ -479,14 +346,18 @@ pub fn interpolate<
                 edges[edge_index].interpolate(vertices, dir, &mut points);
             }
             let end = points.len();
-            graph.push_loop(end - start);
+            polyedges.insert_loop(start..end);
         }
     }
 
     // Now, re-interpret those boundary points into (U, V) coordinates.
     let uv: Vec<_> = points.iter().cloned().map(into_uv).collect();
 
-    Interpolation { points, uv, graph }
+    Interpolation {
+        points,
+        uv,
+        edges: polyedges,
+    }
 }
 
 fn u<VECTOR: Sized + Dot<VECTOR> + XHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
@@ -574,10 +445,14 @@ fn cmp_turn_angle<
     }
 }
 
+fn cmp_avoid(avoid: usize, i: usize, j: usize) -> Ordering {
+    (i == avoid).cmp(&(j == avoid))
+}
+
 pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
-    mut graph: Graph,
-) -> Graph
+    mut edges: EdgeSet,
+) -> EdgeSet
 where
     SPACE::Scalar: Debug,
     SPACE::Vector: Debug,
@@ -588,7 +463,7 @@ where
     sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
 
     #[derive(Clone, Debug)]
-    struct PolyEdge {
+    struct MonotoneEdge {
         from_node: usize,
         helper: usize,
         helper_is_merge: bool,
@@ -596,7 +471,7 @@ where
 
     // The state of the sweep line algorithm: a sorted list of all active edges and their helpers.
     // (consider replacing this with a data structure allowing efficient insertion into the middle)
-    let mut t = Vec::<PolyEdge>::new();
+    let mut t = Vec::<MonotoneEdge>::new();
 
     fn search_t<
         VECTOR: Copy
@@ -606,7 +481,7 @@ where
             + WeightNorm<Output: PartialEq + Default>
             + Unitized<Output = VECTOR>,
     >(
-        t: &Vec<PolyEdge>,
+        t: &Vec<MonotoneEdge>,
         uv: &[VECTOR],
         adjacent: &[(usize, usize)],
         pt: VECTOR,
@@ -616,7 +491,7 @@ where
     {
         let pt_u = u(pt);
         let sweep_line = pt.join(VECTOR::x_hat());
-        t.binary_search_by(|&PolyEdge { from_node, .. }| {
+        t.binary_search_by(|&MonotoneEdge { from_node, .. }| {
             let (_, to_node) = adjacent[from_node];
             let edge_line = uv[from_node].join(uv[to_node]);
             let intersection_pt = sweep_line.meet(edge_line);
@@ -643,11 +518,11 @@ where
             + WeightNorm<Output: PartialEq + Default>
             + Unitized<Output = VECTOR>,
     >(
-        t: &mut Vec<PolyEdge>,
+        t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         adjacent: &[(usize, usize)],
         pt: VECTOR,
-    ) -> Option<PolyEdge>
+    ) -> Option<MonotoneEdge>
     where
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
     {
@@ -667,11 +542,11 @@ where
             + WeightNorm<Output: PartialEq + Default>
             + Unitized<Output = VECTOR>,
     >(
-        t: &mut Vec<PolyEdge>,
+        t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         adjacent: &[(usize, usize)],
         pt: VECTOR,
-        edge: PolyEdge,
+        edge: MonotoneEdge,
     ) where
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
     {
@@ -688,11 +563,11 @@ where
             + WeightNorm<Output: PartialEq + Default>
             + Unitized<Output = VECTOR>,
     >(
-        t: &'a mut Vec<PolyEdge>,
+        t: &'a mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         adjacent: &[(usize, usize)],
         pt: VECTOR,
-    ) -> Option<&'a mut PolyEdge>
+    ) -> Option<&'a mut MonotoneEdge>
     where
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
     {
@@ -703,98 +578,26 @@ where
         Some(&mut t[ix])
     }
 
-    /*
-    let search_t =
-        |t: &mut Vec<PolyEdge>, adjacent: &[(usize, usize)], pt: SPACE::Vector| -> usize {
-            let pt_u = u(pt);
-            let sweep_line = pt.join(SPACE::Vector::x_hat());
-            t.binary_search_by(|&PolyEdge { from_node, .. }| {
-                let (_, to_node) = adjacent[from_node];
-                let edge_line = uv[from_node].join(uv[to_node]);
-                let intersection_u = u(sweep_line.meet(edge_line).unitized());
-
-                if intersection_u <= pt_u {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            })
-            .unwrap_err()
-        };
-
-    let pop_t = |t: &mut Vec<PolyEdge>,
-                 adjacent: &[(usize, usize)],
-                 pt: SPACE::Vector|
-     -> Option<PolyEdge> {
-        let ix = search_t(t, &uv, adjacent, pt);
-
-        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
-
-        let edge = t.remove(ix);
-        Some(edge)
-    };
-
-    let push_t =
-        |t: &mut Vec<PolyEdge>, adjacent: &[(usize, usize)], pt: SPACE::Vector, edge: PolyEdge| {
-            let i = search_t(t, &uv, adjacent, pt);
-            t.insert(i, edge);
-        };
-
-
-    let peek_t_mut = |t: &'a mut Vec<PolyEdge>,
-                      adjacent: &[(usize, usize)],
-                      pt: SPACE::Vector|
-     -> Option<&'a mut PolyEdge> {
-        let ix = search_t(t, &uv, adjacent, pt);
-
-        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
-
-        Some(&mut t[ix])
-    };
-    */
-
-    //let pop_t_for_update = |t: &mut BTreeMap<SPACE::Scalar, PolyEdge>,
-    //                        adjacent: &[(usize, usize)],
-    //                        pt: SPACE::Vector|
-    // -> Option<(SPACE::Scalar, PolyEdge)> {
-    //    let edge = pop_t(t, pt)?;
-    //    let from_node = edge.from_node;
-    //    let (_, to_node) = adjacent[from_node];
-
-    //    let sweep_line = pt.join(SPACE::Vector::x_hat());
-    //    let edge_line = uv[from_node].join(uv[to_node]);
-
-    //    // TODO this unitized() can be removed in favor of using a homogeneous magnitude
-    //    let new_u = u(sweep_line.meet(edge_line).unitized());
-    //    Some((new_u, edge))
-    //};
-
     // Populate "next" and "prev" lists of nodes, from the graph
     let adjacent = {
-        let empty = graph.nodes.len();
-        let mut adjacent = vec![(empty, empty); graph.nodes.len()];
-        for (
-            i,
-            GraphNode {
-                first_outgoing_edge: mut cur_edge,
-            },
-        ) in graph.nodes.iter().enumerate()
-        {
-            while let Some(edge) = cur_edge {
-                let from = i;
-                let to = graph.edges[edge].to;
-                assert!(adjacent[from].1 == empty, "Graph topology error--branching");
-                assert!(adjacent[to].0 == empty, "Graph topology error--branching");
-                adjacent[from].1 = to;
-                adjacent[to].0 = from;
-
-                cur_edge = graph.edges[edge].next_outgoing_edge;
-            }
+        let node_count = uv.len();
+        let mut adjacent = vec![(node_count, node_count); node_count];
+        for (from, to) in edges.iter() {
+            assert!(
+                adjacent[from].1 == node_count,
+                "Graph topology error--branching"
+            );
+            assert!(
+                adjacent[to].0 == node_count,
+                "Graph topology error--branching"
+            );
+            adjacent[from].1 = to;
+            adjacent[to].0 = from;
         }
         assert!(
             adjacent
                 .iter()
-                .all(|&(prev, next)| prev < empty && next < empty),
+                .all(|&(prev, next)| prev < node_count && next < node_count),
             "Graph topology error--dead ends"
         );
         adjacent
@@ -837,7 +640,7 @@ where
                     &uv,
                     &adjacent,
                     pt,
-                    PolyEdge {
+                    MonotoneEdge {
                         from_node: i,
                         helper: i,
                         helper_is_merge: false,
@@ -849,8 +652,8 @@ where
                 {
                     let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
                         .expect("No active edge found to the left of point");
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                     edge.helper = i;
                     edge.helper_is_merge = false;
                 }
@@ -859,7 +662,7 @@ where
                     &uv,
                     &adjacent,
                     pt,
-                    PolyEdge {
+                    MonotoneEdge {
                         from_node: i,
                         helper: i,
                         helper_is_merge: false,
@@ -873,8 +676,8 @@ where
                 let edge = pop_t(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                 }
             } else {
                 // This is a merge vertex
@@ -883,15 +686,15 @@ where
                     .expect("No active edge found to the left of point");
 
                 if edge.helper_is_merge {
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                 }
 
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                 }
                 edge.helper = i;
                 edge.helper_is_merge = true;
@@ -905,15 +708,15 @@ where
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     // Walk the part of the polygon we are cutting off
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                 }
                 push_t(
                     &mut t,
                     &uv,
                     &adjacent,
                     pt,
-                    PolyEdge {
+                    MonotoneEdge {
                         from_node: i,
                         helper: i,
                         helper_is_merge: false,
@@ -925,8 +728,8 @@ where
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
-                    graph.push_edge(i, edge.helper);
-                    graph.push_edge(edge.helper, i);
+                    edges.insert(i, edge.helper);
+                    edges.insert(edge.helper, i);
                 }
                 edge.helper = i;
                 edge.helper_is_merge = false;
@@ -934,13 +737,13 @@ where
         }
     }
 
-    graph
+    edges
 }
 
 pub fn triangulate_monotone_components<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
-    mut graph: Graph,
-) -> Graph
+    mut edges: EdgeSet,
+) -> EdgeSet
 where
     SPACE::Vector: Debug,     // TEMP
     SPACE::Scalar: Debug,     // TEMP
@@ -949,11 +752,11 @@ where
     let anti_zero = SPACE::AntiScalar::default();
 
     // Initialize an "unvisited" set
-    let mut unvisited_graph = graph.clone();
+    let mut unvisited_edges = edges.clone();
     let mut monotone_poly_edges = Vec::<(usize, usize)>::new();
     let mut s = Vec::<(usize, bool)>::new();
 
-    while let Some((start_node, second_node)) = unvisited_graph.pop_edge() {
+    while let Some((start_node, second_node)) = unvisited_edges.pop() {
         // Walk a single monotone polygon from the graph
         monotone_poly_edges.clear(); // Prepare for a fresh polygon
         monotone_poly_edges.push((start_node, second_node));
@@ -969,11 +772,15 @@ where
             let uv_prev = uv[prev_node];
             let uv_cur = uv[cur_node];
 
-            let next_node = unvisited_graph
-                .pop_min_outgoing_edge_by(prev_node, cur_node, |&i, &j| {
-                    cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])
+            let next_node = unvisited_edges
+                .pop_min_outgoing_by(cur_node, |&i, &j| {
+                    cmp_avoid(prev_node, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]))
                 })
                 .expect("Bad manifold--no outgoing edge");
+            assert!(
+                next_node != cur_node,
+                "Bad manifold--only option is reflex edge"
+            );
             monotone_poly_edges.push((cur_node, next_node));
 
             (prev_node, cur_node) = (cur_node, next_node);
@@ -1029,16 +836,16 @@ where
                     // Different chains
                     println!("Different chain");
                     println!("Add diagonal {:?} to {:?}", node, s_top);
-                    graph.push_edge(node, s_top);
-                    graph.push_edge(s_top, node);
+                    edges.insert(node, s_top);
+                    edges.insert(s_top, node);
                     while s.len() > 1 {
                         let (s_top, _) = s.pop().unwrap();
 
                         // Add an edge to all nodes on the stack,
                         // except the last one
                         println!("Add diagonal {:?} to {:?}", node, s_top);
-                        graph.push_edge(node, s_top);
-                        graph.push_edge(s_top, node);
+                        edges.insert(node, s_top);
+                        edges.insert(s_top, node);
                     }
                     s.pop().expect("Stack empty during triangulation?"); // Discard last stack element
                 } else {
@@ -1052,8 +859,8 @@ where
                         // See if adding an edge is possible
                         let proposed_tri = uv[s_test_top].join(uv[s_top]).join(uv[node]);
                         if match is_left {
-                            true => proposed_tri < anti_zero,
-                            false => proposed_tri > anti_zero,
+                            true => proposed_tri <= anti_zero,
+                            false => proposed_tri >= anti_zero,
                         } {
                             println!(
                                 "Diag {:?} to {:?} doesn't work-- tri={:?}-{:?}-{:?}={:?}",
@@ -1066,8 +873,8 @@ where
                         (s_top, s_top_is_left) = s.pop().unwrap();
 
                         println!("Add diagonal {:?} to {:?}", node, s_top);
-                        graph.push_edge(node, s_top);
-                        graph.push_edge(s_top, node);
+                        edges.insert(node, s_top);
+                        edges.insert(s_top, node);
                     }
                 }
                 s.push((s_top, s_top_is_left));
@@ -1081,23 +888,23 @@ where
             println!("Stack is {:?}", s);
             for &(s_entry, _) in &s[1..s.len() - 1] {
                 println!("Add diagonal {:?} to {:?}", node, s_entry);
-                graph.push_edge(node, s_entry);
-                graph.push_edge(s_entry, node);
+                edges.insert(node, s_entry);
+                edges.insert(s_entry, node);
             }
         }
     }
 
-    graph
+    edges
 }
 
-pub fn graph_to_triangles<SPACE: SpaceUv>(
+pub fn edges_to_triangles<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
-    mut graph: Graph,
+    mut edges: EdgeSet,
 ) -> Vec<[usize; 3]> {
     // Initialize an "unvisited" set
     let mut triangles = Vec::<[usize; 3]>::new();
 
-    while let Some((node1, node2)) = graph.pop_edge() {
+    while let Some((node1, node2)) = edges.pop() {
         // Walk a single monotone polygon from the graph
 
         println!("*TRI*");
@@ -1109,9 +916,10 @@ pub fn graph_to_triangles<SPACE: SpaceUv>(
             let uv_prev = uv[node1];
             let uv_cur = uv[node2];
 
-            let node3 = graph
-                .pop_min_outgoing_edge_by(node1, node2, |&i, &j| {
-                    let result = cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]);
+            let node3 = edges
+                .pop_min_outgoing_by(node2, |&i, &j| {
+                    let result =
+                        cmp_avoid(node1, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]));
                     println!(
                         "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
                         node1, node2, i, result, node1, node2, j
@@ -1129,12 +937,13 @@ pub fn graph_to_triangles<SPACE: SpaceUv>(
             let uv_prev = uv[node2];
             let uv_cur = uv[node3];
 
-            let node4 = graph
-                .pop_min_outgoing_edge_by(node2, node3, |&i, &j| {
-                    let result = cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]);
+            let node4 = edges
+                .pop_min_outgoing_by(node3, |&i, &j| {
+                    let result =
+                        cmp_avoid(node2, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]));
                     println!(
                         "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
-                        node2, node3, i, result, node1, node2, j
+                        node2, node3, i, result, node2, node3, j
                     );
                     result
                 })
@@ -1356,11 +1165,11 @@ mod tests {
                 Vector::point([R32(0.), R32(1.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(3);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..3);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
-            assert_eq!(graph, new_graph);
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            assert_eq!(edges, new_graph);
         }
 
         {
@@ -1372,11 +1181,11 @@ mod tests {
                 Vector::point([R32(0.), R32(1.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(4);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
-            assert_eq!(graph, new_graph);
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            assert_eq!(edges, new_graph);
         }
 
         {
@@ -1392,11 +1201,11 @@ mod tests {
                 Vector::point([R32(0.), R32(0.5)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(8);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..8);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, graph.clone());
-            assert_eq!(graph, new_graph);
+            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            assert_eq!(edges, new_graph);
         }
     }
 
@@ -1414,12 +1223,12 @@ mod tests {
                 Vector::point([R32(0.), R32(0.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(7);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..7);
 
-            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
             // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(graph.edges.len(), 11);
+            assert_eq!(edges.len(), 11);
         }
 
         {
@@ -1434,12 +1243,12 @@ mod tests {
                 Vector::point([R32(6.), R32(0.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(7);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..7);
 
-            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
             // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(graph.edges.len(), 11);
+            assert_eq!(edges.len(), 11);
         }
     }
 
@@ -1460,13 +1269,13 @@ mod tests {
                 Vector::point([R32(0.25), R32(0.25)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(4);
-            graph.push_loop(4);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+            edges.insert_loop(4..8);
 
-            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
             // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(graph.edges.len(), 12);
+            assert_eq!(edges.len(), 12);
         }
     }
 
@@ -1496,15 +1305,15 @@ mod tests {
             Vector::point([R32(2.25), R32(0.25)]),
         ];
 
-        let mut graph = Graph::new();
-        graph.push_loop(4);
-        graph.push_loop(4);
-        graph.push_loop(4);
-        graph.push_loop(4);
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..4);
+        edges.insert_loop(4..8);
+        edges.insert_loop(8..12);
+        edges.insert_loop(12..16);
 
-        let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
         // Four diagonals should have been added for a total of 8 more graph edges
-        assert_eq!(graph.edges.len(), 24);
+        assert_eq!(edges.len(), 24);
 
         // TODO make sure no diagonals go from the first shape (vertices 0-8) to the second shape (vertices 8-16)
     }
@@ -1519,11 +1328,11 @@ mod tests {
                 Vector::point([R32(0.), R32(1.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(3);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..3);
 
-            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-            let tri = graph_to_triangles::<Space2D>(&uv, graph);
+            let graph = triangulate_monotone_components::<Space2D>(&uv, edges);
+            let tri = edges_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 1);
         }
 
@@ -1536,13 +1345,13 @@ mod tests {
                 Vector::point([R32(0.), R32(1.)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(4);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
 
-            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+            let graph = triangulate_monotone_components::<Space2D>(&uv, edges);
             println!("TRIANGULATE: {:?}", graph);
             println!("{:?}", uv);
-            let tri = graph_to_triangles::<Space2D>(&uv, graph);
+            let tri = edges_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 2);
         }
 
@@ -1559,13 +1368,13 @@ mod tests {
                 Vector::point([R32(0.), R32(0.5)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(8);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..8);
 
-            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-            println!("TRIANGULATE: {:?}", graph);
+            let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+            println!("TRIANGULATE: {:?}", edges);
             println!("{:?}", uv);
-            let tri = graph_to_triangles::<Space2D>(&uv, graph);
+            let tri = edges_to_triangles::<Space2D>(&uv, edges);
             assert_eq!(tri.len(), 6);
         }
     }
@@ -1587,15 +1396,15 @@ mod tests {
                 Vector::point([R32(0.25), R32(0.25)]),
             ];
 
-            let mut graph = Graph::new();
-            graph.push_loop(4);
-            graph.push_loop(4);
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+            edges.insert_loop(4..8);
 
-            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
-            println!("Graph after partitioning into monotone is {:?}", graph);
-            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-            println!("Graph after triangulation is {:?}", graph);
-            let _tri = graph_to_triangles::<Space2D>(&uv, graph);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+            println!("Edges after partitioning into monotone is {:?}", edges);
+            let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+            println!("Edges after triangulation is {:?}", edges);
+            let _tri = edges_to_triangles::<Space2D>(&uv, edges);
         }
     }
 
