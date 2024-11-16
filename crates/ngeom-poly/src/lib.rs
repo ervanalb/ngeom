@@ -942,90 +942,90 @@ pub fn triangulate_monotone_components<SPACE: SpaceUv>(
     mut graph: Graph,
 ) -> Graph
 where
-    SPACE::Vector: Debug, // TEMP
-    SPACE::Scalar: Debug, // TEMP
+    SPACE::Vector: Debug,     // TEMP
+    SPACE::Scalar: Debug,     // TEMP
+    SPACE::AntiScalar: Debug, // TEMP
 {
     let anti_zero = SPACE::AntiScalar::default();
 
     // Initialize an "unvisited" set
     let mut unvisited_graph = graph.clone();
-    let mut monotone_poly_nodes = Vec::<usize>::new();
+    let mut monotone_poly_nodes = Vec::<(usize, usize, usize)>::new();
     let mut s = Vec::<(usize, bool)>::new();
 
-    while let Some((start_node, mut cur_node)) = unvisited_graph.pop_edge() {
+    while let Some((start_node, second_node)) = unvisited_graph.pop_edge() {
         // Walk a single monotone polygon from the graph
         monotone_poly_nodes.clear(); // Prepare for a fresh polygon
-        monotone_poly_nodes.push(start_node);
 
-        println!("START WALK {:?} to {:?}", start_node, cur_node);
+        println!("START WALK {:?} to {:?}", start_node, second_node);
 
-        let mut prev_node = start_node;
+        let (mut prev_node, mut cur_node) = (start_node, second_node);
 
         loop {
             println!("walk from {:?} to {:?}", prev_node, cur_node);
-            monotone_poly_nodes.push(cur_node);
 
             // Find the next node
             let uv_prev = uv[prev_node];
             let uv_cur = uv[cur_node];
 
-            prev_node = cur_node;
-            cur_node = unvisited_graph
+            let next_node = unvisited_graph
                 .pop_min_outgoing_edge_by(prev_node, cur_node, |&i, &j| {
                     cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])
                 })
                 .expect("Bad manifold--no outgoing edge");
+            monotone_poly_nodes.push((prev_node, cur_node, next_node));
 
-            println!("pop {:?}", cur_node);
+            (prev_node, cur_node) = (cur_node, next_node);
 
             if cur_node == start_node {
+                // We never actually pushed the first node since we didn't know its prev
+                monotone_poly_nodes.push((prev_node, start_node, second_node));
                 println!("DONE!");
                 break;
             }
         }
 
         if monotone_poly_nodes.len() > 3 {
-            // Store "next" pointers for the current monotone polygon
-            let next: Vec<_> = monotone_poly_nodes[1..]
-                .iter()
-                .cloned()
-                .chain(Some(monotone_poly_nodes[0]).into_iter())
-                .collect();
-
             // Sort the current monotone polygon nodes in sweep-line order
-            monotone_poly_nodes.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
+            monotone_poly_nodes.sort_by(|&(_, i, _), &(_, j, _)| cmp_uv(uv[i], uv[j]));
 
             // Initialize stack
             s.clear();
-            s.push((monotone_poly_nodes[0], false));
+            s.push((monotone_poly_nodes[0].1, false));
             s.push((
-                monotone_poly_nodes[1],
-                is_on_left_chain(uv[monotone_poly_nodes[1]], uv[next[monotone_poly_nodes[1]]]),
+                monotone_poly_nodes[1].1,
+                is_on_left_chain(uv[monotone_poly_nodes[1].1], uv[monotone_poly_nodes[1].2]),
             ));
             println!(
                 "Push {:?} {:?}",
-                monotone_poly_nodes[0], uv[monotone_poly_nodes[0]]
+                monotone_poly_nodes[0], uv[monotone_poly_nodes[0].1]
             );
             println!(
                 "Push {:?} {:?} on the {}",
                 monotone_poly_nodes[1],
-                uv[monotone_poly_nodes[1]],
-                if is_on_left_chain(uv[monotone_poly_nodes[1]], uv[next[monotone_poly_nodes[1]]]) {
+                uv[monotone_poly_nodes[1].1],
+                if is_on_left_chain(uv[monotone_poly_nodes[1].1], uv[monotone_poly_nodes[1].2]) {
                     "left"
                 } else {
                     "right"
                 }
             );
-            for &node in &monotone_poly_nodes[2..monotone_poly_nodes.len() - 1] {
-                let is_left = is_on_left_chain(uv[node], uv[next[node]]);
+            for &(prev, node, next) in &monotone_poly_nodes[2..monotone_poly_nodes.len() - 1] {
+                let is_left = is_on_left_chain(uv[node], uv[next]);
                 println!(
                     "Considering node {:?} {:?} on the {}",
                     node,
                     uv[node],
                     if is_left { "left" } else { "right" }
                 );
+                println!("Stack is {:?}", s);
                 let (mut s_top, mut s_top_is_left) =
                     s.pop().expect("Stack empty during triangulation?");
+                println!(
+                    "Pop {:?} on the {}",
+                    s_top,
+                    if is_left { "left" } else { "right" }
+                );
                 if s_top_is_left != is_left {
                     // Different chains
                     println!("Different chain");
@@ -1046,18 +1046,25 @@ where
                     // Same chain
                     println!("Same chain");
                     loop {
-                        let Some((s_penultimate, s_penultimate_is_left)) = s.pop() else {
+                        let Some(&(s_test_top, _)) = s.last() else {
                             break;
                         };
-                        // Add an edge if possible
-                        let proposed_tri = uv[node].join(uv[s_top]).join(uv[s_penultimate]);
-                        if is_left && proposed_tri > anti_zero
-                            || !is_left && proposed_tri < anti_zero
-                        {
+
+                        // See if adding an edge is possible
+                        let proposed_tri = uv[s_test_top].join(uv[s_top]).join(uv[node]);
+                        if match is_left {
+                            true => proposed_tri < anti_zero,
+                            false => proposed_tri > anti_zero,
+                        } {
+                            println!(
+                                "Diag {:?} to {:?} doesn't work-- tri={:?}-{:?}-{:?}={:?}",
+                                node, s_test_top, s_test_top, s_top, node, proposed_tri
+                            );
+                            // This diagonal doesn't work
                             break;
                         }
 
-                        (s_top, s_top_is_left) = (s_penultimate, s_penultimate_is_left);
+                        (s_top, s_top_is_left) = s.pop().unwrap();
 
                         println!("Add diagonal {:?} to {:?}", node, s_top);
                         graph.push_edge(node, s_top);
@@ -1066,13 +1073,13 @@ where
                 }
                 s.push((s_top, s_top_is_left));
                 s.push((node, is_left));
-                println!("Stack is now {:?}", s);
             }
 
             // Last node: Add edges to all remaining nodes in the stack,
             // except the last one
-            let &node = monotone_poly_nodes.last().unwrap();
+            let &(_, node, _) = monotone_poly_nodes.last().unwrap();
             println!("Handling last node: {:?} {:?}", node, uv[node]);
+            println!("Stack is {:?}", s);
             for &(s_entry, _) in &s[1..s.len() - 1] {
                 println!("Add diagonal {:?} to {:?}", node, s_entry);
                 graph.push_edge(node, s_entry);
@@ -1561,6 +1568,35 @@ mod tests {
             println!("{:?}", uv);
             let tri = graph_to_triangles::<Space2D>(&uv, graph);
             assert_eq!(tri.len(), 6);
+        }
+    }
+
+    #[test]
+    fn test_triangulate_square_hole() {
+        {
+            // Square
+            let uv = vec![
+                // Outside
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(1.)]),
+                // Hole
+                Vector::point([R32(0.25), R32(0.75)]),
+                Vector::point([R32(0.75), R32(0.75)]),
+                Vector::point([R32(0.75), R32(0.25)]),
+                Vector::point([R32(0.25), R32(0.25)]),
+            ];
+
+            let mut graph = Graph::new();
+            graph.push_loop(4);
+            graph.push_loop(4);
+
+            let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
+            println!("Graph after partitioning into monotone is {:?}", graph);
+            let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
+            println!("Graph after triangulation is {:?}", graph);
+            let _tri = graph_to_triangles::<Space2D>(&uv, graph);
         }
     }
 
