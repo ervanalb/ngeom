@@ -950,12 +950,13 @@ where
 
     // Initialize an "unvisited" set
     let mut unvisited_graph = graph.clone();
-    let mut monotone_poly_nodes = Vec::<(usize, usize, usize)>::new();
+    let mut monotone_poly_edges = Vec::<(usize, usize)>::new();
     let mut s = Vec::<(usize, bool)>::new();
 
     while let Some((start_node, second_node)) = unvisited_graph.pop_edge() {
         // Walk a single monotone polygon from the graph
-        monotone_poly_nodes.clear(); // Prepare for a fresh polygon
+        monotone_poly_edges.clear(); // Prepare for a fresh polygon
+        monotone_poly_edges.push((start_node, second_node));
 
         println!("START WALK {:?} to {:?}", start_node, second_node);
 
@@ -973,44 +974,42 @@ where
                     cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])
                 })
                 .expect("Bad manifold--no outgoing edge");
-            monotone_poly_nodes.push((prev_node, cur_node, next_node));
+            monotone_poly_edges.push((cur_node, next_node));
 
             (prev_node, cur_node) = (cur_node, next_node);
 
             if cur_node == start_node {
-                // We never actually pushed the first node since we didn't know its prev
-                monotone_poly_nodes.push((prev_node, start_node, second_node));
                 println!("DONE!");
                 break;
             }
         }
 
-        if monotone_poly_nodes.len() > 3 {
+        if monotone_poly_edges.len() > 3 {
             // Sort the current monotone polygon nodes in sweep-line order
-            monotone_poly_nodes.sort_by(|&(_, i, _), &(_, j, _)| cmp_uv(uv[i], uv[j]));
+            monotone_poly_edges.sort_by(|&(i, _), &(j, _)| cmp_uv(uv[i], uv[j]));
 
             // Initialize stack
             s.clear();
-            s.push((monotone_poly_nodes[0].1, false));
+            s.push((monotone_poly_edges[0].0, false));
             s.push((
-                monotone_poly_nodes[1].1,
-                is_on_left_chain(uv[monotone_poly_nodes[1].1], uv[monotone_poly_nodes[1].2]),
+                monotone_poly_edges[1].0,
+                is_on_left_chain(uv[monotone_poly_edges[1].0], uv[monotone_poly_edges[1].1]),
             ));
             println!(
                 "Push {:?} {:?}",
-                monotone_poly_nodes[0], uv[monotone_poly_nodes[0].1]
+                monotone_poly_edges[0], uv[monotone_poly_edges[0].0]
             );
             println!(
                 "Push {:?} {:?} on the {}",
-                monotone_poly_nodes[1],
-                uv[monotone_poly_nodes[1].1],
-                if is_on_left_chain(uv[monotone_poly_nodes[1].1], uv[monotone_poly_nodes[1].2]) {
+                monotone_poly_edges[1],
+                uv[monotone_poly_edges[1].0],
+                if is_on_left_chain(uv[monotone_poly_edges[1].0], uv[monotone_poly_edges[1].1]) {
                     "left"
                 } else {
                     "right"
                 }
             );
-            for &(prev, node, next) in &monotone_poly_nodes[2..monotone_poly_nodes.len() - 1] {
+            for &(node, next) in &monotone_poly_edges[2..monotone_poly_edges.len() - 1] {
                 let is_left = is_on_left_chain(uv[node], uv[next]);
                 println!(
                     "Considering node {:?} {:?} on the {}",
@@ -1077,7 +1076,7 @@ where
 
             // Last node: Add edges to all remaining nodes in the stack,
             // except the last one
-            let &(_, node, _) = monotone_poly_nodes.last().unwrap();
+            let &(node, _) = monotone_poly_edges.last().unwrap();
             println!("Handling last node: {:?} {:?}", node, uv[node]);
             println!("Stack is {:?}", s);
             for &(s_entry, _) in &s[1..s.len() - 1] {
