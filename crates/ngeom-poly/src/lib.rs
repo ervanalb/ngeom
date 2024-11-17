@@ -1209,135 +1209,163 @@ mod tests {
     }
 
     #[test]
-    fn test_make_monotone_already_monotone() {
-        {
-            // Triangle
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(0.), R32(1.)]),
-            ];
+    fn test_triangle() {
+        let uv = vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(0.), R32(1.)]),
+        ];
 
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..3);
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..3);
 
-            let new_graph =
-                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
-            assert_eq!(edges, new_graph);
-        }
+        let old_edges = edges.clone();
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
 
-        {
-            // Square
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-            ];
+        // Graph should not have changed since a triangle is already monotone
+        assert_eq!(old_edges, edges);
 
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-
-            let new_graph =
-                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
-            assert_eq!(edges, new_graph);
-        }
-
-        {
-            // Square with redundant edge points
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(0.5), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.5)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.5), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-                Vector::point([R32(0.), R32(0.5)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..8);
-
-            let new_graph =
-                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
-            assert_eq!(edges, new_graph);
-        }
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 1);
     }
 
     #[test]
-    fn test_make_monotone_comb() {
-        {
-            // Three-pointed comb like this: /\/\/\
-            let uv = vec![
-                Vector::point([R32(6.), R32(0.)]),
-                Vector::point([R32(5.), R32(1.)]),
-                Vector::point([R32(4.), R32(0.5)]),
-                Vector::point([R32(3.), R32(1.)]),
-                Vector::point([R32(2.), R32(0.5)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(0.)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..7);
-
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(edges.len(), 11);
-        }
-
-        {
-            // Upside-down three-pointed comb like this: \/\/\/
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(-1.)]),
-                Vector::point([R32(2.), R32(-0.5)]),
-                Vector::point([R32(3.), R32(-1.)]),
-                Vector::point([R32(4.), R32(-0.5)]),
-                Vector::point([R32(5.), R32(-1.)]),
-                Vector::point([R32(6.), R32(0.)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..7);
-
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(edges.len(), 11);
-        }
-    }
-
-    #[test]
-    fn test_make_monotone_square_hole() {
-        {
-            // Square
-            let uv = vec![
-                // Outside
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-                // Hole
-                Vector::point([R32(0.25), R32(0.75)]),
-                Vector::point([R32(0.75), R32(0.75)]),
-                Vector::point([R32(0.75), R32(0.25)]),
-                Vector::point([R32(0.25), R32(0.25)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-            edges.insert_loop(4..8);
-
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            // Two diagonals should have been added for a total of 4 more graph edges
-            assert_eq!(edges.len(), 12);
-        }
-    }
-
-    #[test]
-    fn test_make_monotone_multiple_shapes() {
+    fn test_square() {
         // Square
+        let uv = vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..4);
+
+        let old_edges = edges.clone();
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+
+        // Graph should not have changed since a triangle is already monotone
+        assert_eq!(old_edges, edges);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 2);
+    }
+
+    #[test]
+    fn test_square_with_redundant_edge_points() {
+        // Square with redundant edge points
+        let uv = vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(0.5), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.5)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.5), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([R32(0.), R32(0.5)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..8);
+
+        let old_edges = edges.clone();
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+
+        // Graph should not have changed since a triangle is already monotone
+        assert_eq!(old_edges, edges);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 6);
+    }
+
+    #[test]
+    fn test_upward_comb() {
+        // Three-pointed comb like this: /\/\/\
+        let uv = vec![
+            Vector::point([R32(6.), R32(0.)]),
+            Vector::point([R32(5.), R32(1.)]),
+            Vector::point([R32(4.), R32(0.5)]),
+            Vector::point([R32(3.), R32(1.)]),
+            Vector::point([R32(2.), R32(0.5)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(0.)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..7);
+
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+
+        // Two diagonals should have been added for a total of 4 more graph edges
+        assert_eq!(edges.len(), 11);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 5);
+    }
+
+    #[test]
+    fn test_downward_comb() {
+        // Upside-down three-pointed comb like this: \/\/\/
+        let uv = vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(-1.)]),
+            Vector::point([R32(2.), R32(-0.5)]),
+            Vector::point([R32(3.), R32(-1.)]),
+            Vector::point([R32(4.), R32(-0.5)]),
+            Vector::point([R32(5.), R32(-1.)]),
+            Vector::point([R32(6.), R32(0.)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..7);
+
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+
+        // Two diagonals should have been added for a total of 4 more graph edges
+        assert_eq!(edges.len(), 11);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 5);
+    }
+
+    #[test]
+    fn test_square_hole() {
+        // Square
+        let uv = vec![
+            // Outside
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            // Hole
+            Vector::point([R32(0.25), R32(0.75)]),
+            Vector::point([R32(0.75), R32(0.75)]),
+            Vector::point([R32(0.75), R32(0.25)]),
+            Vector::point([R32(0.25), R32(0.25)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..4);
+        edges.insert_loop(4..8);
+
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        // Two diagonals should have been added for a total of 4 more graph edges
+        assert_eq!(edges.len(), 12);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 8);
+    }
+
+    #[test]
+    fn test_multiple_shapes() {
+        // Two squares, each with a hole
         let uv = vec![
             // Outside
             Vector::point([R32(0.), R32(0.)]),
@@ -1379,11 +1407,15 @@ mod tests {
                 _ => panic!(),
             }
         }
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 16);
     }
 
     #[test]
-    fn test_make_monotone_singularities() {
-        // Square with two points inside of it
+    fn test_line_singularity() {
+        // Square with a line inside of it
         let uv = vec![
             // Outside
             Vector::point([R32(0.), R32(0.)]),
@@ -1395,34 +1427,53 @@ mod tests {
             Vector::point([R32(0.75), R32(0.5)]),
         ];
 
-        {
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-            // Add a line segment singularity
-            edges.insert_loop(4..6);
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..4);
+        // Add a line segment singularity
+        edges.insert_loop(4..6);
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            // We should have added two diagonals to the singular line
-            // to split this into two monotone components
-            assert!(edges.contains(0, 5));
-            assert!(edges.contains(2, 4));
-        }
-        {
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-            // Add two point singularities
-            edges.insert_loop(4..5);
-            edges.insert_loop(5..6);
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        // We should have added two diagonals to the singular line
+        // to split this into two monotone components
+        assert!(edges.contains(0, 5));
+        assert!(edges.contains(2, 4));
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            // We should have added two diagonals to the singular points
-            // to split this into two monotone components
-            assert!(edges.contains(0, 5));
-            assert!(edges.contains(2, 4));
-            // We should have removed the self-loops
-            assert!(!edges.contains(4, 4));
-            assert!(!edges.contains(5, 5));
-        }
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 6);
+    }
+
+    #[test]
+    fn test_point_singularity() {
+        // Square with a line inside of it
+        let uv = vec![
+            // Outside
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            // Two additional points inside it
+            Vector::point([R32(0.25), R32(0.5)]),
+            Vector::point([R32(0.75), R32(0.5)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..4);
+        // Add two point singularities
+        edges.insert_loop(4..5);
+        edges.insert_loop(5..6);
+
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        // We should have added two diagonals to the singular points
+        assert!(edges.contains(0, 5));
+        assert!(edges.contains(2, 4));
+        // We should have removed the self-loops
+        assert!(!edges.contains(4, 4));
+        assert!(!edges.contains(5, 5));
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
+        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        assert_eq!(tri.len(), 6);
     }
 
     #[test]
@@ -1490,96 +1541,6 @@ mod tests {
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
             assert_eq!(err, PartitionError::CoincidentPoints);
-        }
-    }
-
-    #[test]
-    fn test_triangulate_simple_shapes() {
-        {
-            // Triangle
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(0.), R32(1.)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..3);
-
-            let graph = triangulate_monotone_components::<Space2D>(&uv, edges);
-            let tri = edges_to_triangles::<Space2D>(&uv, graph);
-            assert_eq!(tri.len(), 1);
-        }
-
-        {
-            // Square
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-
-            let graph = triangulate_monotone_components::<Space2D>(&uv, edges);
-            println!("TRIANGULATE: {:?}", graph);
-            println!("{:?}", uv);
-            let tri = edges_to_triangles::<Space2D>(&uv, graph);
-            assert_eq!(tri.len(), 2);
-        }
-
-        {
-            // Square with redundant edge points
-            let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(0.5), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.5)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.5), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-                Vector::point([R32(0.), R32(0.5)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..8);
-
-            let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-            println!("TRIANGULATE: {:?}", edges);
-            println!("{:?}", uv);
-            let tri = edges_to_triangles::<Space2D>(&uv, edges);
-            assert_eq!(tri.len(), 6);
-        }
-    }
-
-    #[test]
-    fn test_triangulate_square_hole() {
-        {
-            // Square
-            let uv = vec![
-                // Outside
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(1.)]),
-                // Hole
-                Vector::point([R32(0.25), R32(0.75)]),
-                Vector::point([R32(0.75), R32(0.75)]),
-                Vector::point([R32(0.75), R32(0.25)]),
-                Vector::point([R32(0.25), R32(0.25)]),
-            ];
-
-            let mut edges = EdgeSet::new();
-            edges.insert_loop(0..4);
-            edges.insert_loop(4..8);
-
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
-            println!("Edges after partitioning into monotone is {:?}", edges);
-            let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-            println!("Edges after triangulation is {:?}", edges);
-            let _tri = edges_to_triangles::<Space2D>(&uv, edges);
         }
     }
 
