@@ -451,17 +451,46 @@ fn cmp_avoid(avoid: usize, i: usize, j: usize) -> Ordering {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PartitionError {
+pub enum TriangulationError {
+    /// During monotone partitioning, a branching topology was detected.
+    /// At this stage, the graph must be composed of independent cycles.
+    /// Branching is OK & expected in subsequent steps.
     TopologyBranching,
+
+    /// A node with no outgoing edge was detected
     TopologyDeadEnd,
+
+    /// Two coincident points were detected
     CoincidentPoints,
-    NonPositiveArea,
+
+    /// A region with negative area was detected
+    /// (e.g. incorrect winding direction)
+    NegativeRegion,
+
+    /// A singular point or line segment was detected outside of the polygon
+    SingularRegion,
+
+    /// A region or triangle with negative area (or zero area) was detected
+    /// (e.g. incorrect winding direction)
+    NonPositiveTriangle,
+
+    /// During triangulation, a 1-cycle was detected (1-cycles inside polygons
+    /// before they are made monotone are OK)
+    Topology1Cycle,
+
+    /// During triangulation, a 2-cycle was detected (2-cycles inside polygons
+    /// before they are made monotone are OK)
+    Topology2Cycle,
+
+    /// During triangulation, a >3 cycle was detected (graph is not composed
+    /// exclusively of 3-cycles),
+    TopologyNotTriangle,
 }
 
 pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut edges: EdgeSet,
-) -> Result<EdgeSet, PartitionError>
+) -> Result<EdgeSet, TriangulationError>
 where
     SPACE::Scalar: Debug,
     SPACE::Vector: Debug,
@@ -589,10 +618,10 @@ where
         let mut adjacent = vec![(node_count, node_count); node_count];
         for (from, to) in edges.iter() {
             if adjacent[from].1 != node_count {
-                return Err(PartitionError::TopologyBranching);
+                return Err(TriangulationError::TopologyBranching);
             }
             if adjacent[to].0 != node_count {
-                return Err(PartitionError::TopologyBranching);
+                return Err(TriangulationError::TopologyBranching);
             }
             sweep_line_order.push(from); // "to" would have also worked
             adjacent[from].1 = to;
@@ -604,7 +633,7 @@ where
             .iter()
             .all(|&(prev, next)| (prev < node_count) == (next < node_count))
         {
-            return Err(PartitionError::TopologyDeadEnd);
+            return Err(TriangulationError::TopologyDeadEnd);
         }
 
         // Perform an argsort of the list of referenced nodes
@@ -638,18 +667,17 @@ where
         }
 
         // Categorize the vertex
-
         let vertex_type = if prev == i && i == next {
             // This is a singular point
             VertexType::Singular
         } else {
             let next_pt_below = match cmp_uv(next_pt, pt) {
-                Ordering::Equal => return Err(PartitionError::CoincidentPoints),
+                Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
             };
             let prev_pt_below = match cmp_uv(prev_pt, pt) {
-                Ordering::Equal => return Err(PartitionError::CoincidentPoints),
+                Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
             };
@@ -700,7 +728,7 @@ where
             VertexType::Split => {
                 {
                     let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                        .ok_or(PartitionError::NonPositiveArea)?;
+                        .ok_or(TriangulationError::NegativeRegion)?;
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                     edge.helper = i;
@@ -728,7 +756,7 @@ where
             }
             VertexType::Merge => {
                 let edge =
-                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(PartitionError::NonPositiveArea)?;
+                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(TriangulationError::NegativeRegion)?;
 
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
@@ -736,7 +764,7 @@ where
                 }
 
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(PartitionError::NonPositiveArea)?;
+                    .ok_or(TriangulationError::NegativeRegion)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -746,7 +774,7 @@ where
             }
             VertexType::NormalLeft => {
                 let edge =
-                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(PartitionError::NonPositiveArea)?;
+                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(TriangulationError::NegativeRegion)?;
                 if edge.helper_is_merge {
                     // Walk the part of the polygon we are cutting off
                     edges.insert(i, edge.helper);
@@ -766,7 +794,7 @@ where
             }
             VertexType::NormalRight => {
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(PartitionError::NonPositiveArea)?;
+                    .ok_or(TriangulationError::NegativeRegion)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -778,7 +806,7 @@ where
                 // A singular vertex acts as both a split vertex followed by an immediate merge.
                 // Combining those two actions results in this simple result:
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(PartitionError::NonPositiveArea)?;
+                    .ok_or(TriangulationError::SingularRegion)?;
                 edges.insert(i, edge.helper);
                 edges.insert(edge.helper, i);
                 edge.helper = i;
@@ -796,7 +824,7 @@ where
 pub fn triangulate_monotone_components<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut edges: EdgeSet,
-) -> EdgeSet
+) -> Result<EdgeSet, TriangulationError>
 where
     SPACE::Vector: Debug,     // TEMP
     SPACE::Scalar: Debug,     // TEMP
@@ -829,11 +857,10 @@ where
                 .pop_min_outgoing_by(cur_node, |&i, &j| {
                     cmp_avoid(prev_node, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]))
                 })
-                .expect("Bad manifold--no outgoing edge");
-            assert!(
-                next_node != cur_node,
-                "Bad manifold--only option is reflex edge"
-            );
+                .ok_or(TriangulationError::TopologyDeadEnd)?;
+            if next_node == cur_node {
+                return Err(TriangulationError::SingularRegion);
+            }
             monotone_poly_edges.push((cur_node, next_node));
 
             (prev_node, cur_node) = (cur_node, next_node);
@@ -879,7 +906,7 @@ where
                 );
                 println!("Stack is {:?}", s);
                 let (mut s_top, mut s_top_is_left) =
-                    s.pop().expect("Stack empty during triangulation?");
+                    s.pop().expect("Stack empty during triangulation");
                 println!(
                     "Pop {:?} on the {}",
                     s_top,
@@ -900,7 +927,7 @@ where
                         edges.insert(node, s_top);
                         edges.insert(s_top, node);
                     }
-                    s.pop().expect("Stack empty during triangulation?"); // Discard last stack element
+                    s.pop().expect("Stack empty during triangulation"); // Discard last stack element
                 } else {
                     // Same chain
                     println!("Same chain");
@@ -947,13 +974,13 @@ where
         }
     }
 
-    edges
+    Ok(edges)
 }
 
 pub fn edges_to_triangles<SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut edges: EdgeSet,
-) -> Vec<[usize; 3]> {
+) -> Result<Vec<[usize; 3]>, TriangulationError> {
     // Initialize an "unvisited" set
     let mut triangles = Vec::<[usize; 3]>::new();
 
@@ -979,9 +1006,14 @@ pub fn edges_to_triangles<SPACE: SpaceUv>(
                     );
                     result
                 })
-                .expect("Bad manifold--no outgoing edge");
-            assert!(node3 != node2, "Graph has a 1-cycle");
-            assert!(node3 != node1, "Graph has a 2-cycle");
+                .ok_or(TriangulationError::TopologyDeadEnd)?;
+
+            if node3 == node2 {
+                return Err(TriangulationError::Topology1Cycle);
+            }
+            if node3 == node1 {
+                return Err(TriangulationError::Topology2Cycle);
+            }
             println!("Node 3: {:?}", node3);
             node3
         };
@@ -1002,17 +1034,34 @@ pub fn edges_to_triangles<SPACE: SpaceUv>(
                 })
                 .expect("Bad manifold--no outgoing edge");
             println!("Node 4: {:?}", node4);
-            assert!(
-                node4 == node1,
-                "Graph has a >3 cycle (not fully triangulated)"
-            );
+            if node4 != node1 {
+                return Err(TriangulationError::TopologyNotTriangle);
+            }
+        }
+
+        if !(uv[node1].join(uv[node2]).join(uv[node3]) > Default::default()) {
+            return Err(TriangulationError::NonPositiveTriangle);
         }
 
         println!("OK");
 
         triangles.push([node1, node2, node3]);
     }
-    triangles
+    Ok(triangles)
+}
+
+pub fn triangulate<SPACE: SpaceUv>(
+    uv: &[SPACE::Vector],
+    edges: EdgeSet,
+) -> Result<Vec<[usize; 3]>, TriangulationError>
+where
+    SPACE::Vector: Debug,     // TEMP
+    SPACE::Scalar: Debug,     // TEMP
+    SPACE::AntiScalar: Debug, // TEMP
+{
+    let edges = partition_into_monotone_components::<SPACE>(uv, edges)?;
+    let edges = triangulate_monotone_components::<SPACE>(uv, edges)?;
+    edges_to_triangles::<SPACE>(uv, edges)
 }
 
 #[cfg(test)]
@@ -1225,8 +1274,8 @@ mod tests {
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 1);
     }
 
@@ -1249,8 +1298,8 @@ mod tests {
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 2);
     }
 
@@ -1277,8 +1326,8 @@ mod tests {
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1303,8 +1352,8 @@ mod tests {
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 11);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 5);
     }
 
@@ -1329,8 +1378,8 @@ mod tests {
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 11);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 5);
     }
 
@@ -1358,8 +1407,8 @@ mod tests {
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 12);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 8);
     }
 
@@ -1408,8 +1457,8 @@ mod tests {
             }
         }
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 16);
     }
 
@@ -1438,8 +1487,8 @@ mod tests {
         assert!(edges.contains(0, 5));
         assert!(edges.contains(2, 4));
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1471,8 +1520,8 @@ mod tests {
         assert!(!edges.contains(4, 4));
         assert!(!edges.contains(5, 5));
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
-        let tri = edges_to_triangles::<Space2D>(&uv, edges);
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1493,7 +1542,7 @@ mod tests {
             edges.insert(0, 2);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, PartitionError::TopologyBranching);
+            assert_eq!(err, TriangulationError::TopologyBranching);
         }
         {
             // Dead end
@@ -1503,7 +1552,7 @@ mod tests {
             edges.insert(2, 3);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, PartitionError::TopologyDeadEnd);
+            assert_eq!(err, TriangulationError::TopologyDeadEnd);
         }
         {
             // Wound backwards
@@ -1514,7 +1563,7 @@ mod tests {
             edges.insert(0, 3);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, PartitionError::NonPositiveArea);
+            assert_eq!(err, TriangulationError::NegativeRegion);
         }
         {
             // Self-intersecting
@@ -1525,7 +1574,7 @@ mod tests {
             edges.insert(3, 1);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, PartitionError::NonPositiveArea);
+            assert_eq!(err, TriangulationError::NegativeRegion);
         }
         {
             // Triangle with redundant point
@@ -1540,7 +1589,7 @@ mod tests {
             edges.insert_loop(0..4);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, PartitionError::CoincidentPoints);
+            assert_eq!(err, TriangulationError::CoincidentPoints);
         }
     }
 
