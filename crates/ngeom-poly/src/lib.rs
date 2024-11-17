@@ -297,6 +297,12 @@ impl EdgeSet {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn contains(&self, from: usize, to: usize) -> bool {
+        self.0.contains(&(from, to))
+    }
+    pub fn retain(&mut self, mut f: impl FnMut(usize, usize) -> bool) {
+        self.0.retain(|&(from, to)| f(from, to));
+    }
 }
 
 impl fmt::Debug for EdgeSet {
@@ -402,11 +408,6 @@ fn cmp_turn_angle<
         + BulkNorm<Output = SCALAR>
         + Dot<VECTOR, Output = SCALAR>,
     BIVECTOR: Copy + BulkNorm<Output = SCALAR>,
-    //ANTISCALAR: Copy
-    //    + AntiMul<ANTISCALAR, Output = ANTISCALAR>
-    //    + Default
-    //    + Ord
-    //    + Mul<SCALAR, Output = ANTISCALAR>,
 >(
     pt1: VECTOR,
     pt2: VECTOR,
@@ -449,19 +450,22 @@ fn cmp_avoid(avoid: usize, i: usize, j: usize) -> Ordering {
     (i == avoid).cmp(&(j == avoid))
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum PartitionError {
+    TopologyBranching,
+    TopologyDeadEnd,
+    CoincidentPoints,
+    NonPositiveArea,
+}
+
 pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
     uv: &[SPACE::Vector],
     mut edges: EdgeSet,
-) -> EdgeSet
+) -> Result<EdgeSet, PartitionError>
 where
     SPACE::Scalar: Debug,
     SPACE::Vector: Debug,
 {
-    // And finally, perform an argsort of the list
-    // to get the sweep-line iteration order
-    let mut sweep_line_order: Vec<_> = (0..uv.len()).collect();
-    sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
-
     #[derive(Clone, Debug)]
     struct MonotoneEdge {
         from_node: usize,
@@ -578,29 +582,36 @@ where
         Some(&mut t[ix])
     }
 
-    // Populate "next" and "prev" lists of nodes, from the graph
-    let adjacent = {
+    // Populate list of referenced nodes, plus an adjacency lookup list of (prev, next) nodes, from the graph
+    let (sweep_line_order, adjacent) = {
         let node_count = uv.len();
+        let mut sweep_line_order = vec![];
         let mut adjacent = vec![(node_count, node_count); node_count];
         for (from, to) in edges.iter() {
-            assert!(
-                adjacent[from].1 == node_count,
-                "Graph topology error--branching"
-            );
-            assert!(
-                adjacent[to].0 == node_count,
-                "Graph topology error--branching"
-            );
+            if adjacent[from].1 != node_count {
+                return Err(PartitionError::TopologyBranching);
+            }
+            if adjacent[to].0 != node_count {
+                return Err(PartitionError::TopologyBranching);
+            }
+            sweep_line_order.push(from); // "to" would have also worked
             adjacent[from].1 = to;
             adjacent[to].0 = from;
         }
-        assert!(
-            adjacent
-                .iter()
-                .all(|&(prev, next)| prev < node_count && next < node_count),
-            "Graph topology error--dead ends"
-        );
-        adjacent
+        // Every node must have a next & previous pointer set,
+        // or it must not be referenced at all
+        if !adjacent
+            .iter()
+            .all(|&(prev, next)| (prev < node_count) == (next < node_count))
+        {
+            return Err(PartitionError::TopologyDeadEnd);
+        }
+
+        // Perform an argsort of the list of referenced nodes
+        // to get the sweep-line iteration order
+        sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
+
+        (sweep_line_order, adjacent)
     };
 
     // Iterate over vertices in sweep-line order
@@ -615,26 +626,65 @@ where
         println!("Next is {:?}", next_pt);
         println!("T is {:?}", t);
 
-        let next_pt_below = match cmp_uv(next_pt, pt) {
-            Ordering::Equal => panic!("Found coincident points"),
-            Ordering::Greater => true,
-            Ordering::Less => false,
-        };
-        let prev_pt_below = match cmp_uv(prev_pt, pt) {
-            Ordering::Equal => panic!("Found coincident points"),
-            Ordering::Greater => true,
-            Ordering::Less => false,
+        #[derive(Debug)]
+        enum VertexType {
+            Start,
+            Split,
+            Merge,
+            End,
+            NormalLeft,
+            NormalRight,
+            Singular,
+        }
+
+        // Categorize the vertex
+
+        let vertex_type = if prev == i && i == next {
+            // This is a singular point
+            VertexType::Singular
+        } else {
+            let next_pt_below = match cmp_uv(next_pt, pt) {
+                Ordering::Equal => return Err(PartitionError::CoincidentPoints),
+                Ordering::Greater => true,
+                Ordering::Less => false,
+            };
+            let prev_pt_below = match cmp_uv(prev_pt, pt) {
+                Ordering::Equal => return Err(PartitionError::CoincidentPoints),
+                Ordering::Greater => true,
+                Ordering::Less => false,
+            };
+
+            // Calculate the direction we are turning at this vertex
+            // to differentiate between start / split vertices and end / merge vertices
+            let turn_direction = prev_pt.join(pt).join(next_pt);
+            let anti_zero = SPACE::AntiScalar::default();
+
+            if next_pt_below && prev_pt_below {
+                if turn_direction > anti_zero {
+                    VertexType::Start
+                } else {
+                    VertexType::Split
+                }
+            } else if !next_pt_below && !prev_pt_below {
+                if turn_direction > anti_zero {
+                    VertexType::End
+                } else {
+                    VertexType::Merge
+                }
+            } else {
+                if is_on_left_chain(pt, next_pt) {
+                    VertexType::NormalLeft
+                } else {
+                    VertexType::NormalRight
+                }
+            }
         };
 
-        // Calculate the direction we are turning at this vertex
-        // to differentiate between start / split vertices and end / merge vertices
-        let turn_direction = prev_pt.join(pt).join(next_pt);
-        let anti_zero = SPACE::AntiScalar::default();
+        println!("This is a {:?} vertex", vertex_type);
 
-        if next_pt_below && prev_pt_below {
-            if turn_direction >= anti_zero {
-                // This is a start vertex
-                println!("This is a start vertex");
+        // Take action based on the vertex type
+        match vertex_type {
+            VertexType::Start => {
                 push_t(
                     &mut t,
                     &uv,
@@ -646,12 +696,11 @@ where
                         helper_is_merge: false,
                     },
                 );
-            } else {
-                // This is a split vertex
-                println!("This is a split vertex");
+            }
+            VertexType::Split => {
                 {
                     let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                        .expect("No active edge found to the left of point");
+                        .ok_or(PartitionError::NonPositiveArea)?;
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                     edge.helper = i;
@@ -669,21 +718,17 @@ where
                     },
                 );
             }
-        } else if !next_pt_below && !prev_pt_below {
-            if turn_direction > anti_zero {
-                // This is a end vertex
-                println!("This is a end vertex");
+            VertexType::End => {
                 let edge = pop_t(&mut t, &uv, &adjacent, pt)
                     .expect("No active edge found to the left of point");
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                 }
-            } else {
-                // This is a merge vertex
-                println!("This is a merge vertex");
-                let edge = pop_t(&mut t, &uv, &adjacent, pt)
-                    .expect("No active edge found to the left of point");
+            }
+            VertexType::Merge => {
+                let edge =
+                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(PartitionError::NonPositiveArea)?;
 
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
@@ -691,7 +736,7 @@ where
                 }
 
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .expect("No active edge found to the left of point");
+                    .ok_or(PartitionError::NonPositiveArea)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -699,13 +744,9 @@ where
                 edge.helper = i;
                 edge.helper_is_merge = true;
             }
-        } else {
-            // This is a normal vertex
-            if is_on_left_chain(pt, next_pt) {
-                // This vertex lies on the left side of the interval
-                println!("This is a normal left vertex");
-                let edge = pop_t(&mut t, &uv, &adjacent, pt)
-                    .expect("No active edge found to the left of point");
+            VertexType::NormalLeft => {
+                let edge =
+                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(PartitionError::NonPositiveArea)?;
                 if edge.helper_is_merge {
                     // Walk the part of the polygon we are cutting off
                     edges.insert(i, edge.helper);
@@ -722,11 +763,10 @@ where
                         helper_is_merge: false,
                     },
                 );
-            } else {
-                // This vertex lies on the right side of the interval
-                println!("This is a normal right vertex {:?}", pt);
+            }
+            VertexType::NormalRight => {
                 let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .expect("No active edge found to the left of point");
+                    .ok_or(PartitionError::NonPositiveArea)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -734,10 +774,23 @@ where
                 edge.helper = i;
                 edge.helper_is_merge = false;
             }
+            VertexType::Singular => {
+                // A singular vertex acts as both a split vertex followed by an immediate merge.
+                // Combining those two actions results in this simple result:
+                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
+                    .ok_or(PartitionError::NonPositiveArea)?;
+                edges.insert(i, edge.helper);
+                edges.insert(edge.helper, i);
+                edge.helper = i;
+                edge.helper_is_merge = true;
+            }
         }
     }
 
-    edges
+    // Remove any self-loops (they will have been given real new edges by the algorithm)
+    edges.retain(|from, to| from != to);
+
+    Ok(edges)
 }
 
 pub fn triangulate_monotone_components<SPACE: SpaceUv>(
@@ -1168,7 +1221,8 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..3);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            let new_graph =
+                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
             assert_eq!(edges, new_graph);
         }
 
@@ -1184,7 +1238,8 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..4);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            let new_graph =
+                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
             assert_eq!(edges, new_graph);
         }
 
@@ -1204,7 +1259,8 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..8);
 
-            let new_graph = partition_into_monotone_components::<Space2D>(&uv, edges.clone());
+            let new_graph =
+                partition_into_monotone_components::<Space2D>(&uv, edges.clone()).unwrap();
             assert_eq!(edges, new_graph);
         }
     }
@@ -1226,7 +1282,7 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..7);
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
             // Two diagonals should have been added for a total of 4 more graph edges
             assert_eq!(edges.len(), 11);
         }
@@ -1246,7 +1302,7 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..7);
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
             // Two diagonals should have been added for a total of 4 more graph edges
             assert_eq!(edges.len(), 11);
         }
@@ -1273,7 +1329,7 @@ mod tests {
             edges.insert_loop(0..4);
             edges.insert_loop(4..8);
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
             // Two diagonals should have been added for a total of 4 more graph edges
             assert_eq!(edges.len(), 12);
         }
@@ -1311,11 +1367,130 @@ mod tests {
         edges.insert_loop(8..12);
         edges.insert_loop(12..16);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
         // Four diagonals should have been added for a total of 8 more graph edges
         assert_eq!(edges.len(), 24);
 
-        // TODO make sure no diagonals go from the first shape (vertices 0-8) to the second shape (vertices 8-16)
+        // Make sure no diagonals go from the first shape (vertices 0-8) to the second shape (vertices 8-16)
+        for (from, to) in edges.iter() {
+            match from {
+                0..8 => assert!((0..8).contains(&to)),
+                8..16 => assert!((8..16).contains(&to)),
+                _ => panic!(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_make_monotone_singularities() {
+        // Square with two points inside of it
+        let uv = vec![
+            // Outside
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            // Two additional points inside it
+            Vector::point([R32(0.25), R32(0.5)]),
+            Vector::point([R32(0.75), R32(0.5)]),
+        ];
+
+        {
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+            // Add a line segment singularity
+            edges.insert_loop(4..6);
+
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+            // We should have added two diagonals to the singular line
+            // to split this into two monotone components
+            assert!(edges.contains(0, 5));
+            assert!(edges.contains(2, 4));
+        }
+        {
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+            // Add two point singularities
+            edges.insert_loop(4..5);
+            edges.insert_loop(5..6);
+
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+            // We should have added two diagonals to the singular points
+            // to split this into two monotone components
+            assert!(edges.contains(0, 5));
+            assert!(edges.contains(2, 4));
+            // We should have removed the self-loops
+            assert!(!edges.contains(4, 4));
+            assert!(!edges.contains(5, 5));
+        }
+    }
+
+    #[test]
+    fn test_make_monotone_errors() {
+        // Square
+        let uv = vec![
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+        ];
+
+        {
+            // Branching
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+            edges.insert(0, 2);
+
+            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            assert_eq!(err, PartitionError::TopologyBranching);
+        }
+        {
+            // Dead end
+            let mut edges = EdgeSet::new();
+            edges.insert(0, 1);
+            edges.insert(1, 2);
+            edges.insert(2, 3);
+
+            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            assert_eq!(err, PartitionError::TopologyDeadEnd);
+        }
+        {
+            // Wound backwards
+            let mut edges = EdgeSet::new();
+            edges.insert(3, 2);
+            edges.insert(2, 1);
+            edges.insert(1, 0);
+            edges.insert(0, 3);
+
+            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            assert_eq!(err, PartitionError::NonPositiveArea);
+        }
+        {
+            // Self-intersecting
+            let mut edges = EdgeSet::new();
+            edges.insert(1, 0);
+            edges.insert(0, 2);
+            edges.insert(2, 3);
+            edges.insert(3, 1);
+
+            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            assert_eq!(err, PartitionError::NonPositiveArea);
+        }
+        {
+            // Triangle with redundant point
+            let uv = vec![
+                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([R32(1.), R32(0.)]),
+                Vector::point([R32(1.), R32(1.)]),
+                Vector::point([R32(0.), R32(0.)]),
+            ];
+
+            let mut edges = EdgeSet::new();
+            edges.insert_loop(0..4);
+
+            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            assert_eq!(err, PartitionError::CoincidentPoints);
+        }
     }
 
     #[test]
@@ -1400,7 +1575,7 @@ mod tests {
             edges.insert_loop(0..4);
             edges.insert_loop(4..8);
 
-            let edges = partition_into_monotone_components::<Space2D>(&uv, edges);
+            let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
             println!("Edges after partitioning into monotone is {:?}", edges);
             let edges = triangulate_monotone_components::<Space2D>(&uv, edges);
             println!("Edges after triangulation is {:?}", edges);
