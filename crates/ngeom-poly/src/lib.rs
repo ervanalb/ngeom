@@ -8,6 +8,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::iter::Iterator;
 use std::ops::{Add, Bound, Index as StdIndex, Mul, RangeBounds, Sub};
+use std::mem::replace;
 
 pub trait Space {
     type Scalar: Copy
@@ -452,11 +453,6 @@ fn cmp_avoid(avoid: usize, i: usize, j: usize) -> Ordering {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TriangulationError {
-    /// During monotone partitioning, a branching topology was detected.
-    /// At this stage, the graph must be composed of independent cycles.
-    /// Branching is OK & expected in subsequent steps.
-    TopologyBranching,
-
     /// A node with no outgoing edge was detected
     TopologyDeadEnd,
 
@@ -494,12 +490,19 @@ pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
 where
     SPACE::Scalar: Debug,
     SPACE::Vector: Debug,
+    SPACE::AntiScalar: Debug,
 {
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     struct MonotoneEdge {
         from_node: usize,
+        to_node: usize,
         helper: usize,
         helper_is_merge: bool,
+    }
+    impl fmt::Debug for MonotoneEdge {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{:?} -> {:?}", self.from_node, self.to_node)
+        }
     }
 
     // The state of the sweep line algorithm: a sorted list of all active edges and their helpers.
@@ -508,7 +511,7 @@ where
 
     fn search_t<
         VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Dot<VECTOR, Output: Copy + Ord + Default>
             + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
             + XHat
             + WeightNorm<Output: PartialEq + Default>
@@ -516,36 +519,71 @@ where
     >(
         t: &Vec<MonotoneEdge>,
         uv: &[VECTOR],
-        adjacent: &[(usize, usize)],
-        pt: VECTOR,
+        i: usize,
     ) -> usize
     where
+        VECTOR: Debug,                          // TEMPORARY
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
     {
+        let pt = uv[i];
         let pt_u = u(pt);
         let sweep_line = pt.join(VECTOR::x_hat());
-        t.binary_search_by(|&MonotoneEdge { from_node, .. }| {
-            let (_, to_node) = adjacent[from_node];
-            let edge_line = uv[from_node].join(uv[to_node]);
+
+        let comparison = |e: &MonotoneEdge| {
+            let edge_line = uv[e.from_node].join(uv[e.to_node]);
             let intersection_pt = sweep_line.meet(edge_line);
             let intersection_u = u(if intersection_pt.weight_norm() == Default::default() {
-                uv[to_node]
+                pt
             } else {
                 intersection_pt.unitized()
             });
 
-            if intersection_u <= pt_u {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        })
-        .unwrap_err()
+            intersection_u < pt_u
+        };
+
+        // Return index of first value that compares >= the given pt
+        t.partition_point(comparison)
     }
 
+    fn search_exact_t<
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + Ord + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &Vec<MonotoneEdge>,
+        uv: &[VECTOR],
+        from: usize,
+        to: usize,
+    ) -> Option<usize>
+    where
+        VECTOR: Debug,                          // TEMPORARY
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
+    {
+        let mut ix = search_t(t, &uv, to);
+
+        // Within t there may be a range of edges
+        // all of which include the given point.
+        // ix now points to the first of these,
+        // so we can linearly walk forwards until we find one that matches
+        // or run out of options.
+        while ix < t.len() {
+            if t[ix].from_node == from && t[ix].to_node == to {
+                return Some(ix);
+            }
+            ix += 1;
+        }
+        None
+    }
+
+    // Remove the given left edge from the t
     fn pop_t<
         VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Dot<VECTOR, Output: Copy + Ord + Default>
             + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
             + XHat
             + WeightNorm<Output: PartialEq + Default>
@@ -553,23 +591,45 @@ where
     >(
         t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
-        adjacent: &[(usize, usize)],
-        pt: VECTOR,
+        from: usize,
+        to: usize,
     ) -> Option<MonotoneEdge>
     where
+        VECTOR: Debug,                          // TEMPORARY
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
     {
-        let ix = search_t(t, &uv, adjacent, pt);
+        let ix = search_exact_t(t, &uv, from, to)?;
+        Some(t.remove(ix))
+    }
 
-        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
-
-        let edge = t.remove(ix);
-        Some(edge)
+    // Replace the given left edge from the t
+    fn replace_t<
+        VECTOR: Copy
+            + Dot<VECTOR, Output: Copy + Ord + Default>
+            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
+            + XHat
+            + WeightNorm<Output: PartialEq + Default>
+            + Unitized<Output = VECTOR>,
+    >(
+        t: &mut Vec<MonotoneEdge>,
+        uv: &[VECTOR],
+        from: usize,
+        to: usize,
+        new_edge: MonotoneEdge,
+    ) -> Option<MonotoneEdge>
+    where
+        VECTOR: Debug,                          // TEMPORARY
+        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
+    {
+        let ix = search_exact_t(t, &uv, from, to)?;
+        Some(replace(&mut t[ix], new_edge))
     }
 
     fn push_t<
         VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Dot<VECTOR, Output: Copy + Ord + Default>
             + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
             + XHat
             + WeightNorm<Output: PartialEq + Default>
@@ -577,20 +637,21 @@ where
     >(
         t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
-        adjacent: &[(usize, usize)],
-        pt: VECTOR,
+        i: usize,
         edge: MonotoneEdge,
     ) where
+        VECTOR: Debug,                          // TEMPORARY
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
     {
-        let i = search_t(t, &uv, adjacent, pt);
-        t.insert(i, edge);
+        let ix = search_t(t, &uv, i);
+        t.insert(ix, edge);
     }
 
     fn peek_t_mut<
         'a,
         VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + PartialOrd + Default>
+            + Dot<VECTOR, Output: Copy + Ord + Default>
             + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
             + XHat
             + WeightNorm<Output: PartialEq + Default>
@@ -598,85 +659,101 @@ where
     >(
         t: &'a mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
-        adjacent: &[(usize, usize)],
-        pt: VECTOR,
+        i: usize,
     ) -> Option<&'a mut MonotoneEdge>
     where
+        VECTOR: Debug,                          // TEMPORARY
         <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
+        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
     {
-        let ix = search_t(t, &uv, adjacent, pt);
+        let ix = search_t(t, &uv, i).checked_sub(1)?;
 
-        let ix = if ix == 0 { None } else { Some(ix - 1) }?;
-
+        println!(
+            "Left of interval is {:?} -> {:?}",
+            t[ix].from_node, t[ix].to_node
+        );
         Some(&mut t[ix])
     }
 
+    // Walk the graph. Each time we encounter a vertex, categorize the encounter, and push it to a
+    // list. We will then sort the list in sweep-line order.
+
     // Populate list of referenced nodes, plus an adjacency lookup list of (prev, next) nodes, from the graph
-    let (sweep_line_order, adjacent) = {
-        let node_count = uv.len();
-        let mut sweep_line_order = vec![];
-        let mut adjacent = vec![(node_count, node_count); node_count];
-        for (from, to) in edges.iter() {
-            if adjacent[from].1 != node_count {
-                return Err(TriangulationError::TopologyBranching);
-            }
-            if adjacent[to].0 != node_count {
-                return Err(TriangulationError::TopologyBranching);
-            }
-            sweep_line_order.push(from); // "to" would have also worked
-            adjacent[from].1 = to;
-            adjacent[to].0 = from;
-        }
-        // Every node must have a next & previous pointer set,
-        // or it must not be referenced at all
-        if !adjacent
-            .iter()
-            .all(|&(prev, next)| (prev < node_count) == (next < node_count))
+    //let (sweep_line_order, adjacent) = {
+    //    let node_count = uv.len();
+    //    let mut sweep_line_order = vec![];
+    //    let mut adjacent = vec![(node_count, node_count); node_count];
+    //    for (from, to) in edges.iter() {
+    //        if adjacent[from].1 != node_count {
+    //            return Err(TriangulationError::TopologyBranching);
+    //        }
+    //        if adjacent[to].0 != node_count {
+    //            return Err(TriangulationError::TopologyBranching);
+    //        }
+    //        sweep_line_order.push(from); // "to" would have also worked
+    //        adjacent[from].1 = to;
+    //        adjacent[to].0 = from;
+    //    }
+    //    // Every node must have a next & previous pointer set,
+    //    // or it must not be referenced at all
+    //    if !adjacent
+    //        .iter()
+    //        .all(|&(prev, next)| (prev < node_count) == (next < node_count))
+    //    {
+    //        return Err(TriangulationError::TopologyDeadEnd);
+    //    }
+
+    //    // Perform an argsort of the list of referenced nodes
+    //    // to get the sweep-line iteration order
+    //    sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
+
+    //    (sweep_line_order, adjacent)
+    //};
+
+    // The order of these is important--
+    // it sets the order that the events will be handled
+    // if a given vertex has multiple events
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum EventType {
+        End,
+        Merge,
+        NormalRight,
+        NormalLeft,
+        Split,
+        Start,
+        Singular,
+    }
+
+    let mut unvisited_edges = edges.clone();
+
+    let event_list = {
+        fn categorize_event<
+            VECTOR: Sized
+                + Copy
+                + Dot<VECTOR, Output: Ord>
+                + XHat
+                + YHat
+                + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>,
+        >(
+            uv_prev: VECTOR,
+            uv_cur: VECTOR,
+            uv_next: VECTOR,
+        ) -> Result<EventType, TriangulationError>
+        where
+            VECTOR: Debug, // TEMP
         {
-            return Err(TriangulationError::TopologyDeadEnd);
-        }
+            // Figure out the type of vertex i by examining its neighbors
+            println!("*** Point {:?} ***", uv_cur);
+            println!("Prev is {:?}", uv_prev);
+            println!("Next is {:?}", uv_next);
 
-        // Perform an argsort of the list of referenced nodes
-        // to get the sweep-line iteration order
-        sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
-
-        (sweep_line_order, adjacent)
-    };
-
-    // Iterate over vertices in sweep-line order
-    for i in sweep_line_order.into_iter() {
-        // Figure out the type of vertex i by examining its neighbors
-        let pt = uv[i];
-        let (prev, next) = adjacent[i];
-        let prev_pt = uv[prev];
-        let next_pt = uv[next];
-        println!("*** Point {:?} is {:?} ***", i, pt);
-        println!("Prev is {:?}", prev_pt);
-        println!("Next is {:?}", next_pt);
-        println!("T is {:?}", t);
-
-        #[derive(Debug)]
-        enum VertexType {
-            Start,
-            Split,
-            Merge,
-            End,
-            NormalLeft,
-            NormalRight,
-            Singular,
-        }
-
-        // Categorize the vertex
-        let vertex_type = if prev == i && i == next {
-            // This is a singular point
-            VertexType::Singular
-        } else {
-            let next_pt_below = match cmp_uv(next_pt, pt) {
+            // Categorize the vertex
+            let next_pt_below = match cmp_uv(uv_next, uv_cur) {
                 Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
             };
-            let prev_pt_below = match cmp_uv(prev_pt, pt) {
+            let prev_pt_below = match cmp_uv(uv_prev, uv_cur) {
                 Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
@@ -684,51 +761,114 @@ where
 
             // Calculate the direction we are turning at this vertex
             // to differentiate between start / split vertices and end / merge vertices
-            let turn_direction = prev_pt.join(pt).join(next_pt);
-            let anti_zero = SPACE::AntiScalar::default();
+            let turn_direction = uv_prev.join(uv_cur).join(uv_next);
 
-            if next_pt_below && prev_pt_below {
-                if turn_direction > anti_zero {
-                    VertexType::Start
+            Ok(if next_pt_below && prev_pt_below {
+                if turn_direction > Default::default() {
+                    EventType::Start
                 } else {
-                    VertexType::Split
+                    EventType::Split
                 }
             } else if !next_pt_below && !prev_pt_below {
-                if turn_direction > anti_zero {
-                    VertexType::End
+                if turn_direction > Default::default() {
+                    EventType::End
                 } else {
-                    VertexType::Merge
+                    EventType::Merge
                 }
             } else {
-                if is_on_left_chain(pt, next_pt) {
-                    VertexType::NormalLeft
+                if is_on_left_chain(uv_cur, uv_next) {
+                    EventType::NormalLeft
                 } else {
-                    VertexType::NormalRight
+                    EventType::NormalRight
                 }
-            }
-        };
+            })
+        }
 
-        println!("This is a {:?} vertex", vertex_type);
+        let mut event_list = Vec::<(usize, usize, usize, EventType)>::new();
+        while let Some((start_node, second_node)) = unvisited_edges.pop() {
+            // Walk a single polygon from the graph
+
+            if start_node == second_node {
+                println!("Singular point: {:?}", start_node);
+                // Special handling for self-loops (singular points)
+                event_list.push((start_node, start_node, start_node, EventType::Singular));
+                continue;
+            }
+
+            println!("START WALK {:?} to {:?}", start_node, second_node);
+
+            let (mut prev_node, mut cur_node) = (start_node, second_node);
+            let mut uv_prev = uv[prev_node];
+            let mut uv_cur = uv[cur_node];
+
+            loop {
+                // Find the next node
+                let next_node = unvisited_edges
+                    .pop_min_outgoing_by(cur_node, |&i, &j| {
+                        cmp_avoid(prev_node, i, j)
+                            .then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]))
+                    })
+                    .ok_or(TriangulationError::TopologyDeadEnd)?;
+                let uv_next = uv[next_node];
+
+                println!("walk from {:?} to {:?}", cur_node, next_node);
+                event_list.push((
+                    prev_node,
+                    cur_node,
+                    next_node,
+                    categorize_event(uv_prev, uv_cur, uv_next)?,
+                ));
+
+                if next_node == start_node {
+                    // We didn't actually push the start node because we couldn't determine is
+                    // category until we knew its prev
+                    event_list.push((
+                        cur_node,
+                        start_node,
+                        second_node,
+                        categorize_event(uv_cur, uv_next, uv[second_node])?,
+                    ));
+                    println!("DONE!");
+                    break;
+                }
+
+                (prev_node, cur_node) = (cur_node, next_node);
+                (uv_prev, uv_cur) = (uv_cur, uv_next);
+            }
+            // handle loop
+        }
+
+        // Sort the event list into sweep-line order
+        // (ordering first by -Y coordinate, then by X coordinate, then by event type)
+        event_list.sort_by(|(_, i1, _, typ1), (_, i2, _, typ2)| {
+            cmp_uv(uv[*i1], uv[*i2]).then(typ1.cmp(typ2))
+        });
+        event_list
+    };
+
+    // Iterate over vertices in sweep-line order
+    for (prev, i, next, vertex_type) in event_list.into_iter() {
+        println!("* {:?} @ {:?} is a {:?} vertex", i, uv[i], vertex_type);
 
         // Take action based on the vertex type
         match vertex_type {
-            VertexType::Start => {
+            EventType::Start => {
                 push_t(
                     &mut t,
                     &uv,
-                    &adjacent,
-                    pt,
+                    i,
                     MonotoneEdge {
                         from_node: i,
+                        to_node: next,
                         helper: i,
                         helper_is_merge: false,
                     },
                 );
             }
-            VertexType::Split => {
+            EventType::Split => {
                 {
-                    let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                        .ok_or(TriangulationError::NegativeRegion)?;
+                    let edge =
+                        peek_t_mut(&mut t, &uv, i).ok_or(TriangulationError::NegativeRegion)?;
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                     edge.helper = i;
@@ -737,34 +877,34 @@ where
                 push_t(
                     &mut t,
                     &uv,
-                    &adjacent,
-                    pt,
+                    i,
                     MonotoneEdge {
                         from_node: i,
+                        to_node: next,
                         helper: i,
                         helper_is_merge: false,
                     },
                 );
             }
-            VertexType::End => {
-                let edge = pop_t(&mut t, &uv, &adjacent, pt)
-                    .expect("No active edge found to the left of point");
+            EventType::End => {
+                let edge =
+                    pop_t(&mut t, &uv, prev, i).expect("End vertex incident edge not found in t");
+                println!("Pop {:?}", edge);
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                 }
             }
-            VertexType::Merge => {
+            EventType::Merge => {
                 let edge =
-                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(TriangulationError::NegativeRegion)?;
+                    pop_t(&mut t, &uv, prev, i).expect("Merge vertex incident edge not found in t");
 
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                 }
 
-                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(TriangulationError::NegativeRegion)?;
+                let edge = peek_t_mut(&mut t, &uv, i).ok_or(TriangulationError::NegativeRegion)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -772,29 +912,29 @@ where
                 edge.helper = i;
                 edge.helper_is_merge = true;
             }
-            VertexType::NormalLeft => {
-                let edge =
-                    pop_t(&mut t, &uv, &adjacent, pt).ok_or(TriangulationError::NegativeRegion)?;
+            EventType::NormalLeft => {
+                // pop exact
+                let edge = replace_t(
+                    &mut t,
+                    &uv,
+                    prev,
+                    i,
+                    MonotoneEdge {
+                        from_node: i,
+                        to_node: next,
+                        helper: i,
+                        helper_is_merge: false,
+                    },
+                )
+                .expect("Left vertex incident edge not found in t");
                 if edge.helper_is_merge {
                     // Walk the part of the polygon we are cutting off
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
                 }
-                push_t(
-                    &mut t,
-                    &uv,
-                    &adjacent,
-                    pt,
-                    MonotoneEdge {
-                        from_node: i,
-                        helper: i,
-                        helper_is_merge: false,
-                    },
-                );
             }
-            VertexType::NormalRight => {
-                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(TriangulationError::NegativeRegion)?;
+            EventType::NormalRight => {
+                let edge = peek_t_mut(&mut t, &uv, i).ok_or(TriangulationError::NegativeRegion)?;
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -802,17 +942,17 @@ where
                 edge.helper = i;
                 edge.helper_is_merge = false;
             }
-            VertexType::Singular => {
+            EventType::Singular => {
                 // A singular vertex acts as both a split vertex followed by an immediate merge.
                 // Combining those two actions results in this simple result:
-                let edge = peek_t_mut(&mut t, &uv, &adjacent, pt)
-                    .ok_or(TriangulationError::SingularRegion)?;
+                let edge = peek_t_mut(&mut t, &uv, i).ok_or(TriangulationError::SingularRegion)?;
                 edges.insert(i, edge.helper);
                 edges.insert(edge.helper, i);
                 edge.helper = i;
                 edge.helper_is_merge = true;
             }
         }
+        println!("T is now {:?}", t);
     }
 
     // Remove any self-loops (they will have been given real new edges by the algorithm)
@@ -1526,6 +1666,60 @@ mod tests {
     }
 
     #[test]
+    fn test_starburst() {
+        // A square with a 1-dimensional starburst in the middle
+        // o--o--o
+        // |\ | /|
+        // | \|/ |
+        // o--o--o
+        // | /|\ |
+        // |/ | \|
+        // o--o--o
+
+        // Square
+        let uv = vec![
+            // Outside
+            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([R32(0.5), R32(0.)]),
+            Vector::point([R32(1.), R32(0.)]),
+            Vector::point([R32(1.), R32(0.5)]),
+            Vector::point([R32(1.), R32(1.)]),
+            Vector::point([R32(0.5), R32(1.)]),
+            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([R32(0.), R32(0.5)]),
+            // Center
+            Vector::point([R32(0.5), R32(0.5)]),
+        ];
+
+        let mut edges = EdgeSet::new();
+        edges.insert_loop(0..8);
+        edges.insert(0, 8);
+        edges.insert(1, 8);
+        edges.insert(2, 8);
+        edges.insert(3, 8);
+        edges.insert(4, 8);
+        edges.insert(5, 8);
+        edges.insert(6, 8);
+        edges.insert(7, 8);
+        edges.insert(8, 0);
+        edges.insert(8, 1);
+        edges.insert(8, 2);
+        edges.insert(8, 3);
+        edges.insert(8, 4);
+        edges.insert(8, 5);
+        edges.insert(8, 6);
+        edges.insert(8, 7);
+
+        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        // Two diagonals should have been added for a total of 4 more graph edges
+        assert_eq!(edges.len(), 24);
+
+        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        assert_eq!(tri.len(), 8);
+    }
+
+    #[test]
     fn test_make_monotone_errors() {
         // Square
         let uv = vec![
@@ -1542,7 +1736,7 @@ mod tests {
             edges.insert(0, 2);
 
             let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
-            assert_eq!(err, TriangulationError::TopologyBranching);
+            assert_eq!(err, TriangulationError::TopologyDeadEnd);
         }
         {
             // Dead end
