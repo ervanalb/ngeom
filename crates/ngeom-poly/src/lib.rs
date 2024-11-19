@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::Debug;
 use std::iter::Iterator;
-use std::ops::{Add, Bound, Index as StdIndex, Mul, RangeBounds, Sub};
 use std::mem::replace;
+use std::ops::{Add, Bound, Index as StdIndex, Mul, RangeBounds, Sub};
 
 pub trait Space {
     type Scalar: Copy
@@ -509,37 +509,17 @@ where
     // (consider replacing this with a data structure allowing efficient insertion into the middle)
     let mut t = Vec::<MonotoneEdge>::new();
 
-    fn search_t<
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
-    >(
+    fn search_t<VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>>(
         t: &Vec<MonotoneEdge>,
         uv: &[VECTOR],
         i: usize,
-    ) -> usize
-    where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) -> usize {
         let pt = uv[i];
-        let pt_u = u(pt);
-        let sweep_line = pt.join(VECTOR::x_hat());
 
         let comparison = |e: &MonotoneEdge| {
-            let edge_line = uv[e.from_node].join(uv[e.to_node]);
-            let intersection_pt = sweep_line.meet(edge_line);
-            let intersection_u = u(if intersection_pt.weight_norm() == Default::default() {
-                pt
-            } else {
-                intersection_pt.unitized()
-            });
-
-            intersection_u < pt_u
+            i != e.from_node
+                && i != e.to_node
+                && uv[e.from_node].join(uv[e.to_node]).join(pt) > Default::default()
         };
 
         // Return index of first value that compares >= the given pt
@@ -547,23 +527,13 @@ where
     }
 
     fn search_exact_t<
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
+        VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>,
     >(
         t: &Vec<MonotoneEdge>,
         uv: &[VECTOR],
         from: usize,
         to: usize,
-    ) -> Option<usize>
-    where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) -> Option<usize> {
         let mut ix = search_t(t, &uv, to);
 
         // Within t there may be a range of edges
@@ -581,91 +551,48 @@ where
     }
 
     // Remove the given left edge from the t
-    fn pop_t<
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
-    >(
+    fn pop_t<VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>>(
         t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         from: usize,
         to: usize,
-    ) -> Option<MonotoneEdge>
-    where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) -> Option<MonotoneEdge> {
         let ix = search_exact_t(t, &uv, from, to)?;
         Some(t.remove(ix))
     }
 
     // Replace the given left edge from the t
     fn replace_t<
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
+        VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>,
     >(
         t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         from: usize,
         to: usize,
         new_edge: MonotoneEdge,
-    ) -> Option<MonotoneEdge>
-    where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) -> Option<MonotoneEdge> {
         let ix = search_exact_t(t, &uv, from, to)?;
         Some(replace(&mut t[ix], new_edge))
     }
 
-    fn push_t<
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
-    >(
+    fn push_t<VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>>(
         t: &mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         i: usize,
         edge: MonotoneEdge,
-    ) where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) {
         let ix = search_t(t, &uv, i);
         t.insert(ix, edge);
     }
 
     fn peek_t_mut<
         'a,
-        VECTOR: Copy
-            + Dot<VECTOR, Output: Copy + Ord + Default>
-            + Join<VECTOR, Output: Copy + Meet<<VECTOR as Join<VECTOR>>::Output, Output = VECTOR>>
-            + XHat
-            + WeightNorm<Output: PartialEq + Default>
-            + Unitized<Output = VECTOR>,
+        VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>,
     >(
         t: &'a mut Vec<MonotoneEdge>,
         uv: &[VECTOR],
         i: usize,
-    ) -> Option<&'a mut MonotoneEdge>
-    where
-        VECTOR: Debug,                          // TEMPORARY
-        <VECTOR as Dot<VECTOR>>::Output: Debug, // TEMPORARY
-        <VECTOR as WeightNorm>::Output: Debug,  // TEMPORARY
-    {
+    ) -> Option<&'a mut MonotoneEdge> {
         let ix = search_t(t, &uv, i).checked_sub(1)?;
 
         println!(
@@ -674,41 +601,6 @@ where
         );
         Some(&mut t[ix])
     }
-
-    // Walk the graph. Each time we encounter a vertex, categorize the encounter, and push it to a
-    // list. We will then sort the list in sweep-line order.
-
-    // Populate list of referenced nodes, plus an adjacency lookup list of (prev, next) nodes, from the graph
-    //let (sweep_line_order, adjacent) = {
-    //    let node_count = uv.len();
-    //    let mut sweep_line_order = vec![];
-    //    let mut adjacent = vec![(node_count, node_count); node_count];
-    //    for (from, to) in edges.iter() {
-    //        if adjacent[from].1 != node_count {
-    //            return Err(TriangulationError::TopologyBranching);
-    //        }
-    //        if adjacent[to].0 != node_count {
-    //            return Err(TriangulationError::TopologyBranching);
-    //        }
-    //        sweep_line_order.push(from); // "to" would have also worked
-    //        adjacent[from].1 = to;
-    //        adjacent[to].0 = from;
-    //    }
-    //    // Every node must have a next & previous pointer set,
-    //    // or it must not be referenced at all
-    //    if !adjacent
-    //        .iter()
-    //        .all(|&(prev, next)| (prev < node_count) == (next < node_count))
-    //    {
-    //        return Err(TriangulationError::TopologyDeadEnd);
-    //    }
-
-    //    // Perform an argsort of the list of referenced nodes
-    //    // to get the sweep-line iteration order
-    //    sweep_line_order.sort_by(|&i, &j| cmp_uv(uv[i], uv[j]));
-
-    //    (sweep_line_order, adjacent)
-    //};
 
     // The order of these is important--
     // it sets the order that the events will be handled
