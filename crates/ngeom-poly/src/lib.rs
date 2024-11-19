@@ -28,29 +28,6 @@ pub trait Space {
     type AntiEven: Copy + AxisAngle<Self::AxisOfRotation, Self::Scalar>;
 }
 
-pub trait SpaceUv {
-    type Scalar: Copy + Ring + PartialOrd;
-    type AntiScalar: Copy
-        + Default
-        + PartialOrd
-        + AntiMul<Self::AntiScalar, Output = Self::AntiScalar>
-        + Mul<Self::Scalar, Output = Self::AntiScalar>;
-    type Vector: Copy
-        + Dot<Self::Vector, Output = Self::Scalar>
-        + XHat
-        + YHat
-        + Join<Self::Vector, Output = Self::Bivector>
-        + WeightNorm<Output = Self::AntiScalar>
-        + BulkNorm<Output = Self::Scalar>
-        + Unitized<Output = Self::Vector>
-        + Sub<Self::Vector, Output = Self::Vector>;
-    type Bivector: Copy
-        + Join<Self::Vector, Output = Self::AntiScalar>
-        + Meet<Self::Bivector, Output = Self::Vector>
-        + WeightNorm<Output = Self::AntiScalar>
-        + BulkNorm<Output = Self::Scalar>;
-}
-
 pub trait Index: Copy + Ord + Eq {}
 
 impl Index for usize {}
@@ -503,14 +480,26 @@ pub enum TriangulationError {
     IncomparablePoints,
 }
 
-pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
-    uv: &[SPACE::Vector],
+pub fn partition_into_monotone_components<
+    'a,
+    SCALAR: Copy + Ring + PartialOrd,
+    VECTOR: Copy
+        + Join<VECTOR, Output = BIVECTOR>
+        + Dot<VECTOR, Output = SCALAR>
+        + XHat
+        + YHat
+        + BulkNorm<Output = SCALAR>
+        + Sub<VECTOR, Output = VECTOR>,
+    BIVECTOR: Copy + Join<VECTOR, Output = ANTISCALAR> + BulkNorm<Output = SCALAR>,
+    ANTISCALAR: Copy + Default + PartialOrd,
+>(
+    uv: &[VECTOR],
     mut edges: EdgeSet,
 ) -> Result<EdgeSet, TriangulationError>
 where
-    SPACE::Scalar: Debug,
-    SPACE::Vector: Debug,
-    SPACE::AntiScalar: Debug,
+    //Scalar: Debug,
+    VECTOR: Debug,
+    //AntiScalar: Debug,
 {
     #[derive(Clone)]
     struct MonotoneEdge {
@@ -886,17 +875,27 @@ where
     Ok(edges)
 }
 
-pub fn triangulate_monotone_components<SPACE: SpaceUv>(
-    uv: &[SPACE::Vector],
+pub fn triangulate_monotone_components<
+    SCALAR: Copy + Ring + PartialOrd,
+    VECTOR: Copy
+        + Join<VECTOR, Output = BIVECTOR>
+        + Dot<VECTOR, Output = SCALAR>
+        + XHat
+        + YHat
+        + BulkNorm<Output = SCALAR>
+        + Sub<VECTOR, Output = VECTOR>,
+    BIVECTOR: Copy + Join<VECTOR, Output = ANTISCALAR> + BulkNorm<Output = SCALAR>,
+    ANTISCALAR: Copy + Default + PartialOrd,
+>(
+    uv: &[VECTOR],
     mut edges: EdgeSet,
 ) -> Result<EdgeSet, TriangulationError>
 where
-    SPACE::Vector: Debug,     // TEMP
-    SPACE::Scalar: Debug,     // TEMP
-    SPACE::AntiScalar: Debug, // TEMP
+    SCALAR: Debug,     // TEMP
+    VECTOR: Debug,     // TEMP
+    BIVECTOR: Debug,   // TEMP
+    ANTISCALAR: Debug, // TEMP
 {
-    let anti_zero = SPACE::AntiScalar::default();
-
     // Initialize an "unvisited" set
     let mut unvisited_edges = edges.clone();
     let mut monotone_poly_edges = Vec::<(usize, usize)>::new();
@@ -1014,13 +1013,9 @@ where
                         // See if adding an edge is possible
                         let proposed_tri = uv[s_test_top].join(uv[s_top]).join(uv[node]);
                         if match is_left {
-                            true => proposed_tri <= anti_zero,
-                            false => proposed_tri >= anti_zero,
+                            true => proposed_tri <= Default::default(),
+                            false => proposed_tri >= Default::default(),
                         } {
-                            println!(
-                                "Diag {:?} to {:?} doesn't work-- tri={:?}-{:?}-{:?}={:?}",
-                                node, s_test_top, s_test_top, s_top, node, proposed_tri
-                            );
                             // This diagonal doesn't work
                             break;
                         }
@@ -1052,8 +1047,19 @@ where
     Ok(edges)
 }
 
-pub fn edges_to_triangles<SPACE: SpaceUv>(
-    uv: &[SPACE::Vector],
+pub fn edges_to_triangles<
+    SCALAR: Copy + Ring + PartialOrd,
+    VECTOR: Copy
+        + Join<VECTOR, Output = BIVECTOR>
+        + Dot<VECTOR, Output = SCALAR>
+        + XHat
+        + YHat
+        + BulkNorm<Output = SCALAR>
+        + Sub<VECTOR, Output = VECTOR>,
+    BIVECTOR: Copy + Join<VECTOR, Output = ANTISCALAR> + BulkNorm<Output = SCALAR>,
+    ANTISCALAR: Copy + Default + PartialOrd,
+>(
+    uv: &[VECTOR],
     mut edges: EdgeSet,
 ) -> Result<Vec<[usize; 3]>, TriangulationError> {
     // Initialize an "unvisited" set
@@ -1117,24 +1123,36 @@ pub fn edges_to_triangles<SPACE: SpaceUv>(
     Ok(triangles)
 }
 
-pub fn triangulate<SPACE: SpaceUv>(
-    uv: &[SPACE::Vector],
+pub fn triangulate<
+    SCALAR: Copy + Ring + PartialOrd,
+    VECTOR: Copy
+        + Join<VECTOR, Output = BIVECTOR>
+        + Dot<VECTOR, Output = SCALAR>
+        + XHat
+        + YHat
+        + BulkNorm<Output = SCALAR>
+        + Sub<VECTOR, Output = VECTOR>,
+    BIVECTOR: Copy + Join<VECTOR, Output = ANTISCALAR> + BulkNorm<Output = SCALAR>,
+    ANTISCALAR: Copy + Default + PartialOrd,
+>(
+    uv: &[VECTOR],
     edges: EdgeSet,
 ) -> Result<Vec<[usize; 3]>, TriangulationError>
 where
-    SPACE::Vector: Debug,     // TEMP
-    SPACE::Scalar: Debug,     // TEMP
-    SPACE::AntiScalar: Debug, // TEMP
+    SCALAR: Debug,     // TEMP
+    VECTOR: Debug,     // TEMP
+    BIVECTOR: Debug,   // TEMP
+    ANTISCALAR: Debug, // TEMP
 {
-    let edges = partition_into_monotone_components::<SPACE>(uv, edges)?;
-    let edges = triangulate_monotone_components::<SPACE>(uv, edges)?;
-    edges_to_triangles::<SPACE>(uv, edges)
+    let edges = partition_into_monotone_components(uv, edges)?;
+    let edges = triangulate_monotone_components(uv, edges)?;
+    edges_to_triangles(uv, edges)
 }
 
 #[cfg(test)]
 mod tests {
     use ngeom::ops::*;
-    use ngeom::re2::{AntiEven, AntiScalar, Bivector, Vector};
+    use ngeom::re2::{AntiEven, AntiScalar, Vector};
     use std::ops::Index as StdIndex;
 
     use super::*;
@@ -1261,12 +1279,14 @@ mod tests {
         type AxisOfRotation = Vector<f32>;
         type AntiEven = AntiEven<f32>;
     }
+    /*
     impl SpaceUv for Space2D {
         type Scalar = f32;
         type AntiScalar = AntiScalar<f32>;
         type Vector = Vector<f32>;
         type Bivector = Bivector<f32>;
     }
+    */
 
     #[derive(Clone)]
     struct VecVertex(Vec<Vector<f32>>);
@@ -1335,13 +1355,13 @@ mod tests {
         edges.insert_loop(0..3);
 
         let old_edges = edges.clone();
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
 
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 1);
     }
 
@@ -1359,13 +1379,13 @@ mod tests {
         edges.insert_loop(0..4);
 
         let old_edges = edges.clone();
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
 
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 2);
     }
 
@@ -1387,13 +1407,13 @@ mod tests {
         edges.insert_loop(0..8);
 
         let old_edges = edges.clone();
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
 
         // Graph should not have changed since a triangle is already monotone
         assert_eq!(old_edges, edges);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1413,13 +1433,13 @@ mod tests {
         let mut edges = EdgeSet::new();
         edges.insert_loop(0..7);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
 
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 11);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 5);
     }
 
@@ -1439,13 +1459,13 @@ mod tests {
         let mut edges = EdgeSet::new();
         edges.insert_loop(0..7);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
 
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 11);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 5);
     }
 
@@ -1469,12 +1489,12 @@ mod tests {
         edges.insert_loop(0..4);
         edges.insert_loop(4..8);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 12);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 8);
     }
 
@@ -1510,7 +1530,7 @@ mod tests {
         edges.insert_loop(8..12);
         edges.insert_loop(12..16);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
         // Four diagonals should have been added for a total of 8 more graph edges
         assert_eq!(edges.len(), 24);
 
@@ -1523,8 +1543,8 @@ mod tests {
             }
         }
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 16);
     }
 
@@ -1547,14 +1567,14 @@ mod tests {
         // Add a line segment singularity
         edges.insert_loop(4..6);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
         // We should have added two diagonals to the singular line
         // to split this into two monotone components
         assert!(edges.contains(0, 5));
         assert!(edges.contains(2, 4));
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1578,7 +1598,7 @@ mod tests {
         edges.insert_loop(4..5);
         edges.insert_loop(5..6);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
         // We should have added two diagonals to the singular points
         assert!(edges.contains(0, 5));
         assert!(edges.contains(2, 4));
@@ -1586,8 +1606,8 @@ mod tests {
         assert!(!edges.contains(4, 4));
         assert!(!edges.contains(5, 5));
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 6);
     }
 
@@ -1636,12 +1656,12 @@ mod tests {
         edges.insert(8, 6);
         edges.insert(8, 7);
 
-        let edges = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap();
+        let edges = partition_into_monotone_components(&uv, edges).unwrap();
         // Two diagonals should have been added for a total of 4 more graph edges
         assert_eq!(edges.len(), 24);
 
-        let edges = triangulate_monotone_components::<Space2D>(&uv, edges).unwrap();
-        let tri = edges_to_triangles::<Space2D>(&uv, edges).unwrap();
+        let edges = triangulate_monotone_components(&uv, edges).unwrap();
+        let tri = edges_to_triangles(&uv, edges).unwrap();
         assert_eq!(tri.len(), 8);
     }
 
@@ -1661,7 +1681,7 @@ mod tests {
             edges.insert_loop(0..4);
             edges.insert(0, 2);
 
-            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            let err = partition_into_monotone_components(&uv, edges).unwrap_err();
             assert_eq!(err, TriangulationError::TopologyDeadEnd);
         }
         {
@@ -1671,7 +1691,7 @@ mod tests {
             edges.insert(1, 2);
             edges.insert(2, 3);
 
-            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            let err = partition_into_monotone_components(&uv, edges).unwrap_err();
             assert_eq!(err, TriangulationError::TopologyDeadEnd);
         }
         {
@@ -1682,7 +1702,7 @@ mod tests {
             edges.insert(1, 0);
             edges.insert(0, 3);
 
-            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            let err = partition_into_monotone_components(&uv, edges).unwrap_err();
             assert_eq!(err, TriangulationError::NegativeRegion);
         }
         {
@@ -1693,7 +1713,7 @@ mod tests {
             edges.insert(2, 3);
             edges.insert(3, 1);
 
-            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            let err = partition_into_monotone_components(&uv, edges).unwrap_err();
             assert_eq!(err, TriangulationError::NegativeRegion);
         }
         {
@@ -1708,7 +1728,7 @@ mod tests {
             let mut edges = EdgeSet::new();
             edges.insert_loop(0..4);
 
-            let err = partition_into_monotone_components::<Space2D>(&uv, edges).unwrap_err();
+            let err = partition_into_monotone_components(&uv, edges).unwrap_err();
             assert_eq!(err, TriangulationError::CoincidentPoints);
         }
     }
@@ -1748,9 +1768,9 @@ mod tests {
     //        graph,
     //    } = interpolate(&vertices, &edges, &faces, |pt| pt);
 
-    //    let graph = partition_into_monotone_components::<Space2D>(&uv, graph);
-    //    let graph = triangulate_monotone_components::<Space2D>(&uv, graph);
-    //    let triangles = graph_to_triangles::<Space2D>(&uv, graph);
+    //    let graph = partition_into_monotone_components(&uv, graph);
+    //    let graph = triangulate_monotone_components(&uv, graph);
+    //    let triangles = graph_to_triangles(&uv, graph);
     //    println!("{:?}", triangles);
     //    //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
     //    //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
