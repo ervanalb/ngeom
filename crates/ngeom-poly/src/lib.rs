@@ -29,10 +29,10 @@ pub trait Space {
 }
 
 pub trait SpaceUv {
-    type Scalar: Copy + Ring + Ord;
+    type Scalar: Copy + Ring + PartialOrd;
     type AntiScalar: Copy
         + Default
-        + Ord
+        + PartialOrd
         + AntiMul<Self::AntiScalar, Output = Self::AntiScalar>
         + Mul<Self::Scalar, Output = Self::AntiScalar>;
     type Vector: Copy
@@ -281,14 +281,25 @@ impl EdgeSet {
         Some(to)
     }
 
-    pub fn pop_min_outgoing_by<F: Fn(&usize, &usize) -> Ordering>(
+    pub fn pop_min_outgoing_by<F: Fn(&usize, &usize) -> Option<Ordering>>(
         &mut self,
         from: usize,
         cmp: F,
-    ) -> Option<usize> {
-        let to = self.iter_successors(from).min_by(cmp)?;
+    ) -> Result<usize, TriangulationError> {
+        let mut bad_cmp = false;
+        let to = self.iter_successors(from).min_by(|a, b| {
+            cmp(a, b).unwrap_or_else(|| {
+                bad_cmp = true;
+                Ordering::Equal
+            })
+        });
+        if bad_cmp {
+            return Err(TriangulationError::IncomparablePoints);
+        }
+        let to = to.ok_or(TriangulationError::TopologyDeadEnd)?;
+
         self.remove(from, to);
-        Some(to)
+        Ok(to)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (usize, usize)> + use<'_> {
@@ -373,11 +384,16 @@ fn u<VECTOR: Sized + Dot<VECTOR> + XHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>:
 fn v<VECTOR: Sized + Dot<VECTOR> + YHat>(pt: VECTOR) -> <VECTOR as Dot<VECTOR>>::Output {
     pt.dot(VECTOR::y_hat())
 }
-fn cmp_uv<VECTOR: Sized + Copy + Dot<VECTOR, Output: Ord> + XHat + YHat>(
+fn partial_cmp_uv<VECTOR: Sized + Copy + Dot<VECTOR, Output: PartialOrd> + XHat + YHat>(
     uv1: VECTOR,
     uv2: VECTOR,
-) -> Ordering {
-    v(uv1).cmp(&v(uv2)).reverse().then(u(uv1).cmp(&u(uv2)))
+) -> Option<Ordering> {
+    Some(
+        v(uv1)
+            .partial_cmp(&v(uv2))?
+            .reverse()
+            .then(u(uv1).partial_cmp(&u(uv2))?),
+    )
 }
 fn is_on_left_chain<
     VECTOR: Copy + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>> + XHat + YHat,
@@ -401,8 +417,8 @@ fn is_on_left_chain<
     }
 }
 
-fn cmp_turn_angle<
-    SCALAR: Copy + Default + Ord + Mul<SCALAR, Output = SCALAR>,
+fn partial_cmp_turn_angle<
+    SCALAR: Copy + Default + PartialOrd + Mul<SCALAR, Output = SCALAR>,
     VECTOR: Copy
         + Join<VECTOR, Output = BIVECTOR>
         + Sub<VECTOR, Output = VECTOR>
@@ -414,7 +430,7 @@ fn cmp_turn_angle<
     pt2: VECTOR,
     pt3a: VECTOR,
     pt3b: VECTOR,
-) -> Ordering {
+) -> Option<Ordering> {
     let v1 = pt2 - pt1;
     let v2a = pt3a - pt2;
     let v2b = pt3b - pt2;
@@ -434,16 +450,16 @@ fn cmp_turn_angle<
     if a_sin >= Default::default() && b_sin >= Default::default() {
         // Both angles are not reflex,
         // so compare their cosines
-        (b_w * a_cos).cmp(&(a_w * b_cos))
+        (b_w * a_cos).partial_cmp(&(a_w * b_cos))
     } else if a_sin < Default::default() && b_sin < Default::default() {
         // Both angles are reflex
         // so compare their cosines
-        (a_w * b_cos).cmp(&(b_w * a_cos))
+        (a_w * b_cos).partial_cmp(&(b_w * a_cos))
     } else {
         // One angle is reflex and one is normal.
         // That means one sine is positive and one is non-negative.
         // This trivial comparison will return the appropriate result
-        b_sin.cmp(&a_sin)
+        b_sin.partial_cmp(&a_sin)
     }
 }
 
@@ -481,6 +497,10 @@ pub enum TriangulationError {
     /// During triangulation, a >3 cycle was detected (graph is not composed
     /// exclusively of 3-cycles),
     TopologyNotTriangle,
+
+    /// During triangulation, two points were found whose coordinates could not be compared
+    /// (e.g. were NAN)
+    IncomparablePoints,
 }
 
 pub fn partition_into_monotone_components<'a, SPACE: SpaceUv>(
@@ -622,7 +642,7 @@ where
         fn categorize_event<
             VECTOR: Sized
                 + Copy
-                + Dot<VECTOR, Output: Ord>
+                + Dot<VECTOR, Output: PartialOrd>
                 + XHat
                 + YHat
                 + Join<VECTOR, Output: Join<VECTOR, Output: Default + PartialOrd>>,
@@ -640,12 +660,16 @@ where
             println!("Next is {:?}", uv_next);
 
             // Categorize the vertex
-            let next_pt_below = match cmp_uv(uv_next, uv_cur) {
+            let next_pt_below = match partial_cmp_uv(uv_next, uv_cur)
+                .ok_or(TriangulationError::IncomparablePoints)?
+            {
                 Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
             };
-            let prev_pt_below = match cmp_uv(uv_prev, uv_cur) {
+            let prev_pt_below = match partial_cmp_uv(uv_prev, uv_cur)
+                .ok_or(TriangulationError::IncomparablePoints)?
+            {
                 Ordering::Equal => return Err(TriangulationError::CoincidentPoints),
                 Ordering::Greater => true,
                 Ordering::Less => false,
@@ -695,12 +719,12 @@ where
 
             loop {
                 // Find the next node
-                let next_node = unvisited_edges
-                    .pop_min_outgoing_by(cur_node, |&i, &j| {
+                let next_node = unvisited_edges.pop_min_outgoing_by(cur_node, |&i, &j| {
+                    Some(
                         cmp_avoid(prev_node, i, j)
-                            .then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]))
-                    })
-                    .ok_or(TriangulationError::TopologyDeadEnd)?;
+                            .then(partial_cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])?),
+                    )
+                })?;
                 let uv_next = uv[next_node];
 
                 println!("walk from {:?} to {:?}", cur_node, next_node);
@@ -732,9 +756,18 @@ where
 
         // Sort the event list into sweep-line order
         // (ordering first by -Y coordinate, then by X coordinate, then by event type)
+        let mut bad_cmp = false;
         event_list.sort_by(|(_, i1, _, typ1), (_, i2, _, typ2)| {
-            cmp_uv(uv[*i1], uv[*i2]).then(typ1.cmp(typ2))
+            partial_cmp_uv(uv[*i1], uv[*i2])
+                .unwrap_or_else(|| {
+                    bad_cmp = true;
+                    Ordering::Equal
+                })
+                .then(typ1.cmp(typ2))
         });
+        if bad_cmp {
+            return Err(TriangulationError::IncomparablePoints);
+        }
         event_list
     };
 
@@ -885,11 +918,12 @@ where
             let uv_prev = uv[prev_node];
             let uv_cur = uv[cur_node];
 
-            let next_node = unvisited_edges
-                .pop_min_outgoing_by(cur_node, |&i, &j| {
-                    cmp_avoid(prev_node, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]))
-                })
-                .ok_or(TriangulationError::TopologyDeadEnd)?;
+            let next_node = unvisited_edges.pop_min_outgoing_by(cur_node, |&i, &j| {
+                Some(
+                    cmp_avoid(prev_node, i, j)
+                        .then(partial_cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])?),
+                )
+            })?;
             if next_node == cur_node {
                 return Err(TriangulationError::SingularRegion);
             }
@@ -905,7 +939,16 @@ where
 
         if monotone_poly_edges.len() > 3 {
             // Sort the current monotone polygon nodes in sweep-line order
-            monotone_poly_edges.sort_by(|&(i, _), &(j, _)| cmp_uv(uv[i], uv[j]));
+            let mut bad_cmp = false;
+            monotone_poly_edges.sort_by(|&(i, _), &(j, _)| {
+                partial_cmp_uv(uv[i], uv[j]).unwrap_or_else(|| {
+                    bad_cmp = true;
+                    Ordering::Equal
+                })
+            });
+            if bad_cmp {
+                return Err(TriangulationError::IncomparablePoints);
+            }
 
             // Initialize stack
             s.clear();
@@ -1028,17 +1071,12 @@ pub fn edges_to_triangles<SPACE: SpaceUv>(
             let uv_prev = uv[node1];
             let uv_cur = uv[node2];
 
-            let node3 = edges
-                .pop_min_outgoing_by(node2, |&i, &j| {
-                    let result =
-                        cmp_avoid(node1, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]));
-                    println!(
-                        "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
-                        node1, node2, i, result, node1, node2, j
-                    );
-                    result
-                })
-                .ok_or(TriangulationError::TopologyDeadEnd)?;
+            let node3 = edges.pop_min_outgoing_by(node2, |&i, &j| {
+                Some(
+                    cmp_avoid(node1, i, j)
+                        .then(partial_cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])?),
+                )
+            })?;
 
             if node3 == node2 {
                 return Err(TriangulationError::Topology1Cycle);
@@ -1056,13 +1094,10 @@ pub fn edges_to_triangles<SPACE: SpaceUv>(
 
             let node4 = edges
                 .pop_min_outgoing_by(node3, |&i, &j| {
-                    let result =
-                        cmp_avoid(node2, i, j).then(cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j]));
-                    println!(
-                        "CMP: {:?}-{:?}-{:?} {:?} {:?}-{:?}-{:?}",
-                        node2, node3, i, result, node2, node3, j
-                    );
-                    result
+                    Some(
+                        cmp_avoid(node2, i, j)
+                            .then(partial_cmp_turn_angle(uv_prev, uv_cur, uv[i], uv[j])?),
+                    )
                 })
                 .expect("Bad manifold--no outgoing edge");
             println!("Node 4: {:?}", node4);
@@ -1098,17 +1133,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use derive_more::*;
     use ngeom::ops::*;
     use ngeom::re2::{AntiEven, AntiScalar, Bivector, Vector};
-    use ngeom::scalar::*;
-    use std::cmp::Ordering;
     use std::ops::Index as StdIndex;
 
     use super::*;
 
     // TYPES SETUP
 
+    /*
     #[derive(
         Clone,
         Copy,
@@ -1218,29 +1251,30 @@ mod tests {
             self.partial_cmp(r).expect("Uncomparable float values")
         }
     }
+    */
 
     struct Space2D;
     impl Space for Space2D {
-        type Scalar = R32;
-        type AntiScalar = AntiScalar<R32>;
-        type Vector = Vector<R32>;
-        type AxisOfRotation = Vector<R32>;
-        type AntiEven = AntiEven<R32>;
+        type Scalar = f32;
+        type AntiScalar = AntiScalar<f32>;
+        type Vector = Vector<f32>;
+        type AxisOfRotation = Vector<f32>;
+        type AntiEven = AntiEven<f32>;
     }
     impl SpaceUv for Space2D {
-        type Scalar = R32;
-        type AntiScalar = AntiScalar<R32>;
-        type Vector = Vector<R32>;
-        type Bivector = Bivector<R32>;
+        type Scalar = f32;
+        type AntiScalar = AntiScalar<f32>;
+        type Vector = Vector<f32>;
+        type Bivector = Bivector<f32>;
     }
 
     #[derive(Clone)]
-    struct VecVertex(Vec<Vector<R32>>);
+    struct VecVertex(Vec<Vector<f32>>);
 
     impl StdIndex<usize> for VecVertex {
-        type Output = Vector<R32>;
+        type Output = Vector<f32>;
 
-        fn index(&self, idx: usize) -> &Vector<R32> {
+        fn index(&self, idx: usize) -> &Vector<f32> {
             self.0.index(idx)
         }
     }
@@ -1292,9 +1326,9 @@ mod tests {
     #[test]
     fn test_triangle() {
         let uv = vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([0., 1.]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1315,10 +1349,10 @@ mod tests {
     fn test_square() {
         // Square
         let uv = vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1339,14 +1373,14 @@ mod tests {
     fn test_square_with_redundant_edge_points() {
         // Square with redundant edge points
         let uv = vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(0.5), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.5)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.5), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
-            Vector::point([R32(0.), R32(0.5)]),
+            Vector::point([0., 0.]),
+            Vector::point([0.5, 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 0.5]),
+            Vector::point([1., 1.]),
+            Vector::point([0.5, 1.]),
+            Vector::point([0., 1.]),
+            Vector::point([0., 0.5]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1367,13 +1401,13 @@ mod tests {
     fn test_upward_comb() {
         // Three-pointed comb like this: /\/\/\
         let uv = vec![
-            Vector::point([R32(6.), R32(0.)]),
-            Vector::point([R32(5.), R32(1.)]),
-            Vector::point([R32(4.), R32(0.5)]),
-            Vector::point([R32(3.), R32(1.)]),
-            Vector::point([R32(2.), R32(0.5)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(0.)]),
+            Vector::point([6., 0.]),
+            Vector::point([5., 1.]),
+            Vector::point([4., 0.5]),
+            Vector::point([3., 1.]),
+            Vector::point([2., 0.5]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 0.]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1393,13 +1427,13 @@ mod tests {
     fn test_downward_comb() {
         // Upside-down three-pointed comb like this: \/\/\/
         let uv = vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(-1.)]),
-            Vector::point([R32(2.), R32(-0.5)]),
-            Vector::point([R32(3.), R32(-1.)]),
-            Vector::point([R32(4.), R32(-0.5)]),
-            Vector::point([R32(5.), R32(-1.)]),
-            Vector::point([R32(6.), R32(0.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., -1.]),
+            Vector::point([2., -0.5]),
+            Vector::point([3., -1.]),
+            Vector::point([4., -0.5]),
+            Vector::point([5., -1.]),
+            Vector::point([6., 0.]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1420,15 +1454,15 @@ mod tests {
         // Square
         let uv = vec![
             // Outside
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
             // Hole
-            Vector::point([R32(0.25), R32(0.75)]),
-            Vector::point([R32(0.75), R32(0.75)]),
-            Vector::point([R32(0.75), R32(0.25)]),
-            Vector::point([R32(0.25), R32(0.25)]),
+            Vector::point([0.25, 0.75]),
+            Vector::point([0.75, 0.75]),
+            Vector::point([0.75, 0.25]),
+            Vector::point([0.25, 0.25]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1449,25 +1483,25 @@ mod tests {
         // Two squares, each with a hole
         let uv = vec![
             // Outside
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
             // Hole
-            Vector::point([R32(0.25), R32(0.75)]),
-            Vector::point([R32(0.75), R32(0.75)]),
-            Vector::point([R32(0.75), R32(0.25)]),
-            Vector::point([R32(0.25), R32(0.25)]),
+            Vector::point([0.25, 0.75]),
+            Vector::point([0.75, 0.75]),
+            Vector::point([0.75, 0.25]),
+            Vector::point([0.25, 0.25]),
             // Second square outside
-            Vector::point([R32(2.), R32(0.)]),
-            Vector::point([R32(3.), R32(0.)]),
-            Vector::point([R32(3.), R32(1.)]),
-            Vector::point([R32(2.), R32(1.)]),
+            Vector::point([2., 0.]),
+            Vector::point([3., 0.]),
+            Vector::point([3., 1.]),
+            Vector::point([2., 1.]),
             // Second square hole
-            Vector::point([R32(2.25), R32(0.75)]),
-            Vector::point([R32(2.75), R32(0.75)]),
-            Vector::point([R32(2.75), R32(0.25)]),
-            Vector::point([R32(2.25), R32(0.25)]),
+            Vector::point([2.25, 0.75]),
+            Vector::point([2.75, 0.75]),
+            Vector::point([2.75, 0.25]),
+            Vector::point([2.25, 0.25]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1499,13 +1533,13 @@ mod tests {
         // Square with a line inside of it
         let uv = vec![
             // Outside
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
             // Two additional points inside it
-            Vector::point([R32(0.25), R32(0.5)]),
-            Vector::point([R32(0.75), R32(0.5)]),
+            Vector::point([0.25, 0.5]),
+            Vector::point([0.75, 0.5]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1529,13 +1563,13 @@ mod tests {
         // Square with a line inside of it
         let uv = vec![
             // Outside
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
             // Two additional points inside it
-            Vector::point([R32(0.25), R32(0.5)]),
-            Vector::point([R32(0.75), R32(0.5)]),
+            Vector::point([0.25, 0.5]),
+            Vector::point([0.75, 0.5]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1571,16 +1605,16 @@ mod tests {
         // Square
         let uv = vec![
             // Outside
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(0.5), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.5)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.5), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
-            Vector::point([R32(0.), R32(0.5)]),
+            Vector::point([0., 0.]),
+            Vector::point([0.5, 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 0.5]),
+            Vector::point([1., 1.]),
+            Vector::point([0.5, 1.]),
+            Vector::point([0., 1.]),
+            Vector::point([0., 0.5]),
             // Center
-            Vector::point([R32(0.5), R32(0.5)]),
+            Vector::point([0.5, 0.5]),
         ];
 
         let mut edges = EdgeSet::new();
@@ -1615,10 +1649,10 @@ mod tests {
     fn test_make_monotone_errors() {
         // Square
         let uv = vec![
-            Vector::point([R32(0.), R32(0.)]),
-            Vector::point([R32(1.), R32(0.)]),
-            Vector::point([R32(1.), R32(1.)]),
-            Vector::point([R32(0.), R32(1.)]),
+            Vector::point([0., 0.]),
+            Vector::point([1., 0.]),
+            Vector::point([1., 1.]),
+            Vector::point([0., 1.]),
         ];
 
         {
@@ -1665,10 +1699,10 @@ mod tests {
         {
             // Triangle with redundant point
             let uv = vec![
-                Vector::point([R32(0.), R32(0.)]),
-                Vector::point([R32(1.), R32(0.)]),
-                Vector::point([R32(1.), R32(1.)]),
-                Vector::point([R32(0.), R32(0.)]),
+                Vector::point([0., 0.]),
+                Vector::point([1., 0.]),
+                Vector::point([1., 1.]),
+                Vector::point([0., 0.]),
             ];
 
             let mut edges = EdgeSet::new();
@@ -1683,17 +1717,17 @@ mod tests {
     //fn test_triangulate() {
     //    // DATA
     //    let vertices = VecVertex(vec![
-    //        Vector::point([R32(0.), R32(0.)]),
-    //        Vector::point([R32(1.), R32(0.)]),
-    //        Vector::point([R32(0.), R32(1.)]),
+    //        Vector::point([0., 0.]),
+    //        Vector::point([1., 0.]),
+    //        Vector::point([0., 1.]),
     //    ]);
 
     //    let edges = VecEdge(vec![
     //        Edge::Line(Line { start: 0, end: 1 }),
     //        Edge::Arc(Arc {
     //            start: 1,
-    //            axis: Vector::point([R32(0.), R32(0.)]),
-    //            end_angle: R32(std::f32::consts::TAU / 8.),
+    //            axis: Vector::point([0., 0.]),
+    //            end_angle: std::f32::consts::TAU / 8.,
     //            end: 2,
     //        }),
     //        //Edge::Line(Line { start: 1, end: 2 }),
