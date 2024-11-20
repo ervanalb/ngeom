@@ -1,0 +1,9 @@
+[package]
+name = "draw2d"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ngeom = { path = "../../crates/ngeom" }
+ngeom-polygon = { path = "../../crates/ngeom-polygon" }
+enum_dispatch = "0.3.13"

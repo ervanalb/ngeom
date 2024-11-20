@@ -1,15 +1,14 @@
 [package]
-name = "ngeom-poly"
+name = "ngeom-polygon"
 version = "0.1.0"
 authors = ["Eric Van Albert"]
-description = "Geometry in N dimensions"
+description = "Polygon algorithms like triangulation"
 repository = "https://github.com/ervanalb/ngeom"
 edition = "2021"
 readme = "../../README.md"
 license = "MIT"
 keywords = ["geometry", "graphics"]
-categories = ["data-structures", "mathematics", "no-std", "graphics"]
+categories = ["data-structures", "mathematics", "graphics"]
 
 [dependencies]
 ngeom = { path = "../ngeom" }
-enum_dispatch = "0.3.13"
