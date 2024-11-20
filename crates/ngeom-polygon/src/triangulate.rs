@@ -182,12 +182,7 @@ pub fn partition_into_monotone_components<
 >(
     uv: &[VECTOR],
     mut edges: EdgeSet,
-) -> Result<EdgeSet, TriangulationError>
-where
-    //Scalar: Debug,
-    VECTOR: Debug,
-    //AntiScalar: Debug,
-{
+) -> Result<EdgeSet, TriangulationError> {
     #[derive(Clone)]
     struct MonotoneEdge {
         from_node: NodeIndex,
@@ -291,10 +286,6 @@ where
     ) -> Option<&'a mut MonotoneEdge> {
         let ix = search_t(t, &uv, i).checked_sub(1)?;
 
-        println!(
-            "Left of interval is {:?} -> {:?}",
-            t[ix].from_node, t[ix].to_node
-        );
         Some(&mut t[ix])
     }
 
@@ -326,16 +317,8 @@ where
             uv_prev: VECTOR,
             uv_cur: VECTOR,
             uv_next: VECTOR,
-        ) -> Result<EventType, TriangulationError>
-        where
-            VECTOR: Debug, // TEMP
-        {
+        ) -> Result<EventType, TriangulationError> {
             // Figure out the type of vertex i by examining its neighbors
-            println!("*** Point {:?} ***", uv_cur);
-            println!("Prev is {:?}", uv_prev);
-            println!("Next is {:?}", uv_next);
-
-            // Categorize the vertex
             let next_pt_below = match partial_cmp_uv(uv_next, uv_cur)
                 .ok_or(TriangulationError::IncomparablePoints)?
             {
@@ -381,13 +364,10 @@ where
             // Walk a single polygon from the graph
 
             if start_node == second_node {
-                println!("Singular point: {:?}", start_node);
                 // Special handling for self-loops (singular points)
                 event_list.push((start_node, start_node, start_node, EventType::Singular));
                 continue;
             }
-
-            println!("START WALK {:?} to {:?}", start_node, second_node);
 
             let (mut prev_node, mut cur_node) = (start_node, second_node);
             let mut uv_prev = uv[prev_node];
@@ -399,7 +379,6 @@ where
                     walk_sharpest_angle(&uv, &mut unvisited_edges, prev_node, cur_node)?;
                 let uv_next = uv[next_node];
 
-                println!("walk from {:?} to {:?}", cur_node, next_node);
                 event_list.push((
                     prev_node,
                     cur_node,
@@ -416,7 +395,6 @@ where
                         second_node,
                         categorize_event(uv_cur, uv_next, uv[second_node])?,
                     ));
-                    println!("DONE!");
                     break;
                 }
 
@@ -445,8 +423,6 @@ where
 
     // Iterate over vertices in sweep-line order
     for (prev, i, next, vertex_type) in event_list.into_iter() {
-        println!("* {:?} @ {:?} is a {:?} vertex", i, uv[i], vertex_type);
-
         // Take action based on the vertex type
         match vertex_type {
             EventType::Start => {
@@ -486,7 +462,6 @@ where
             EventType::End => {
                 let edge =
                     pop_t(&mut t, &uv, prev, i).expect("End vertex incident edge not found in t");
-                println!("Pop {:?}", edge);
                 if edge.helper_is_merge {
                     edges.insert(i, edge.helper);
                     edges.insert(edge.helper, i);
@@ -549,7 +524,6 @@ where
                 edge.helper_is_merge = true;
             }
         }
-        println!("T is now {:?}", t);
     }
 
     // Remove any self-loops (they will have been given real new edges by the algorithm)
@@ -569,13 +543,7 @@ pub fn triangulate_monotone_components<
 >(
     uv: &[VECTOR],
     mut edges: EdgeSet,
-) -> Result<EdgeSet, TriangulationError>
-where
-    SCALAR: Debug,     // TEMP
-    VECTOR: Debug,     // TEMP
-    BIVECTOR: Debug,   // TEMP
-    ANTISCALAR: Debug, // TEMP
-{
+) -> Result<EdgeSet, TriangulationError> {
     // Initialize an "unvisited" set
     let mut unvisited_edges = edges.clone();
     let mut monotone_poly_edges = Vec::<(NodeIndex, NodeIndex)>::new();
@@ -586,13 +554,9 @@ where
         monotone_poly_edges.clear(); // Prepare for a fresh polygon
         monotone_poly_edges.push((start_node, second_node));
 
-        println!("START WALK {:?} to {:?}", start_node, second_node);
-
         let (mut prev_node, mut cur_node) = (start_node, second_node);
 
         loop {
-            println!("walk from {:?} to {:?}", prev_node, cur_node);
-
             // Find the next node
             let next_node = walk_sharpest_angle(&uv, &mut unvisited_edges, prev_node, cur_node)?;
             if next_node == cur_node {
@@ -603,7 +567,6 @@ where
             (prev_node, cur_node) = (cur_node, next_node);
 
             if cur_node == start_node {
-                println!("DONE!");
                 break;
             }
         }
@@ -628,40 +591,12 @@ where
                 monotone_poly_edges[1].0,
                 is_on_left_chain(uv[monotone_poly_edges[1].0], uv[monotone_poly_edges[1].1]),
             ));
-            println!(
-                "Push {:?} {:?}",
-                monotone_poly_edges[0], uv[monotone_poly_edges[0].0]
-            );
-            println!(
-                "Push {:?} {:?} on the {}",
-                monotone_poly_edges[1],
-                uv[monotone_poly_edges[1].0],
-                if is_on_left_chain(uv[monotone_poly_edges[1].0], uv[monotone_poly_edges[1].1]) {
-                    "left"
-                } else {
-                    "right"
-                }
-            );
             for &(node, next) in &monotone_poly_edges[2..monotone_poly_edges.len() - 1] {
                 let is_left = is_on_left_chain(uv[node], uv[next]);
-                println!(
-                    "Considering node {:?} {:?} on the {}",
-                    node,
-                    uv[node],
-                    if is_left { "left" } else { "right" }
-                );
-                println!("Stack is {:?}", s);
                 let (mut s_top, mut s_top_is_left) =
                     s.pop().expect("Stack empty during triangulation");
-                println!(
-                    "Pop {:?} on the {}",
-                    s_top,
-                    if is_left { "left" } else { "right" }
-                );
                 if s_top_is_left != is_left {
                     // Different chains
-                    println!("Different chain");
-                    println!("Add diagonal {:?} to {:?}", node, s_top);
                     edges.insert(node, s_top);
                     edges.insert(s_top, node);
                     while s.len() > 1 {
@@ -669,14 +604,12 @@ where
 
                         // Add an edge to all nodes on the stack,
                         // except the last one
-                        println!("Add diagonal {:?} to {:?}", node, s_top);
                         edges.insert(node, s_top);
                         edges.insert(s_top, node);
                     }
                     s.pop().expect("Stack empty during triangulation"); // Discard last stack element
                 } else {
                     // Same chain
-                    println!("Same chain");
                     loop {
                         let Some(&(s_test_top, _)) = s.last() else {
                             break;
@@ -694,7 +627,6 @@ where
 
                         (s_top, s_top_is_left) = s.pop().unwrap();
 
-                        println!("Add diagonal {:?} to {:?}", node, s_top);
                         edges.insert(node, s_top);
                         edges.insert(s_top, node);
                     }
@@ -706,10 +638,7 @@ where
             // Last node: Add edges to all remaining nodes in the stack,
             // except the last one
             let &(node, _) = monotone_poly_edges.last().unwrap();
-            println!("Handling last node: {:?} {:?}", node, uv[node]);
-            println!("Stack is {:?}", s);
             for &(s_entry, _) in &s[1..s.len() - 1] {
-                println!("Add diagonal {:?} to {:?}", node, s_entry);
                 edges.insert(node, s_entry);
                 edges.insert(s_entry, node);
             }
@@ -737,10 +666,9 @@ pub fn edges_to_triangles<
     while let Some((node1, node2)) = edges.pop() {
         // Walk a single monotone polygon from the graph
 
-        println!("*TRI*");
-        println!("Node 1: {:?}", node1);
-        println!("Node 2: {:?}", node2);
-        assert!(node2 != node1, "Graph has a 1-cycle");
+        if node1 == node2 {
+            return Err(TriangulationError::Topology1Cycle);
+        }
 
         let node3 = {
             let node3 = walk_sharpest_angle(&uv, &mut edges, node1, node2)?;
@@ -751,13 +679,11 @@ pub fn edges_to_triangles<
             if node3 == node1 {
                 return Err(TriangulationError::Topology2Cycle);
             }
-            println!("Node 3: {:?}", node3);
             node3
         };
 
         {
             let node4 = walk_sharpest_angle(&uv, &mut edges, node2, node3)?;
-            println!("Node 4: {:?}", node4);
             if node4 != node1 {
                 return Err(TriangulationError::TopologyNotTriangle);
             }
@@ -766,8 +692,6 @@ pub fn edges_to_triangles<
         if !(uv[node1].join(uv[node2]).join(uv[node3]) > Default::default()) {
             return Err(TriangulationError::NonPositiveTriangle);
         }
-
-        println!("OK");
 
         triangles.push([node1, node2, node3]);
     }
@@ -785,13 +709,7 @@ pub fn triangulate<
 >(
     uv: &[VECTOR],
     edges: EdgeSet,
-) -> Result<Vec<[NodeIndex; 3]>, TriangulationError>
-where
-    SCALAR: Debug,     // TEMP
-    VECTOR: Debug,     // TEMP
-    BIVECTOR: Debug,   // TEMP
-    ANTISCALAR: Debug, // TEMP
-{
+) -> Result<Vec<[NodeIndex; 3]>, TriangulationError> {
     let edges = partition_into_monotone_components(uv, edges)?;
     let edges = triangulate_monotone_components(uv, edges)?;
     edges_to_triangles(uv, edges)

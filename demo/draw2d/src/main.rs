@@ -1,310 +1,16 @@
-use enum_dispatch::enum_dispatch;
+use draw2d::*;
 use ngeom::ops::*;
-use ngeom::re2::{AntiEven, AntiScalar, Vector};
-use ngeom::scalar::*;
-use ngeom_polygon::graph::EdgeSet;
+use ngeom::re2::Vector;
 use ngeom_polygon::triangulate::triangulate;
-use std::ops::{Add, Index as StdIndex, Mul};
+use pollster::FutureExt;
+use std::mem;
+use wgpu::util::DeviceExt;
 
-pub trait Space {
-    type Scalar: Copy
-        + Ring
-        + Rational
-        + Sqrt<Output = Self::Scalar>
-        + Trig<Output = Self::Scalar>
-        + From<f32>;
-    type AntiScalar: Copy;
-    type Vector: Copy
-        + Transform<Self::AntiEven, Output = Self::Vector>
-        + Mul<Self::Scalar, Output = Self::Vector>
-        + Add<Output = Self::Vector>;
-    type AxisOfRotation: Copy
-        + Mul<Self::Scalar, Output = Self::AxisOfRotation>
-        + AntiMul<Self::AntiScalar, Output = Self::AxisOfRotation>;
-    type AntiEven: Copy + AxisAngle<Self::AxisOfRotation, Self::Scalar>;
-}
-
-pub trait Index: Copy + Ord + Eq {}
-
-impl Index for usize {}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Dir {
-    Fwd,
-    Rev,
-}
-
-pub trait VertexCollection: StdIndex<Self::Index, Output = <Self::Space as Space>::Vector> {
-    type Space: Space;
-    type Index: Index;
-}
-
-pub trait PointStream {
-    type Point;
-
-    fn push(&mut self, point: Self::Point);
-}
-
-impl<POINT> PointStream for Vec<POINT> {
-    type Point = POINT;
-
-    fn push(&mut self, point: POINT) {
-        self.push(point);
-    }
-}
-
-#[derive(Clone)]
-pub struct FaceBoundary<EI: Index> {
-    pub edges: Vec<(EI, Dir)>,
-}
-
-#[derive(Clone)]
-pub struct Face<EI: Index> {
-    pub boundaries: Vec<FaceBoundary<EI>>,
-}
-
-pub trait EdgeCollection:
-    StdIndex<Self::Index, Output = Edge<Self::Space, Self::VertexIndex>>
-{
-    type Space: Space;
-    type Index: Index;
-    type VertexIndex: Index;
-
-    fn iter(&self) -> impl Iterator<Item = &Edge<Self::Space, Self::VertexIndex>>;
-    //fn iter_outgoing(
-    //    &self,
-    //    vi: Self::VertexIndex,
-    //) -> impl Iterator<Item = &Edge<Self::Space, Self::VertexIndex>>;
-}
-
-pub trait FaceCollection {
-    type Space: Space;
-    type Index: Index;
-    type EdgeIndex: Index;
-    type VertexIndex: Index;
-
-    fn iter(&self) -> impl Iterator<Item = &Face<Self::EdgeIndex>>;
-}
-
-#[enum_dispatch]
-trait EdgeTrait<SPACE: Space, VI: Index> {
-    fn endpoints(&self) -> Option<(VI, VI)>;
-    fn x(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        t: SPACE::Scalar,
-    ) -> SPACE::Vector;
-    fn interpolate(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        dir: Dir,
-        point_stream: &mut impl PointStream<Point = SPACE::Vector>,
-    );
-}
-
-#[derive(Clone, Debug)]
-pub struct Line<VI: Index> {
-    pub start: VI,
-    pub end: VI,
-}
-
-impl<SPACE: Space, VI: Index> EdgeTrait<SPACE, VI> for Line<VI> {
-    fn endpoints(&self) -> Option<(VI, VI)> {
-        Some((self.start, self.end))
-    }
-
-    fn x(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        t: SPACE::Scalar,
-    ) -> SPACE::Vector {
-        vertices[self.start] * (SPACE::Scalar::one() - t) + vertices[self.end] * t
-    }
-
-    fn interpolate(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        dir: Dir,
-        point_stream: &mut impl PointStream<Point = SPACE::Vector>,
-    ) {
-        point_stream.push(
-            vertices[match dir {
-                Dir::Fwd => self.start,
-                Dir::Rev => self.end,
-            }],
-        );
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Arc<SPACE: Space, VI: Index> {
-    pub start: VI,
-    pub axis: SPACE::AxisOfRotation,
-    pub end_angle: SPACE::Scalar,
-    pub end: VI,
-}
-
-impl<SPACE: Space, VI: Index> EdgeTrait<SPACE, VI> for Arc<SPACE, VI> {
-    fn endpoints(&self) -> Option<(VI, VI)> {
-        Some((self.start, self.end))
-    }
-
-    fn x(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        t: SPACE::Scalar,
-    ) -> SPACE::Vector {
-        let start_pt = vertices[self.start];
-        start_pt.transform(SPACE::AntiEven::axis_angle(self.axis, self.end_angle * t))
-    }
-
-    fn interpolate(
-        &self,
-        vertices: &impl VertexCollection<Space = SPACE, Index = VI>,
-        dir: Dir,
-        point_stream: &mut impl PointStream<Point = SPACE::Vector>,
-    ) {
-        for i in 0..10 {
-            // TODO dynamic spacing
-            let i = match dir {
-                Dir::Fwd => i,
-                Dir::Rev => 9 - i,
-            };
-            let t = SPACE::Scalar::from(i as f32 / 10.);
-            point_stream.push(self.x(vertices, t))
-        }
-    }
-}
-
-//#[derive(Clone, Debug)]
-//pub struct Circle<SPACE: Space> {
-//    pub axis: SPACE::AxisOfRotation,
-//    pub pt: SPACE::Vector,
-//}
-
-#[enum_dispatch(EdgeTrait<SPACE, VI>)]
-#[derive(Clone)]
-pub enum Edge<SPACE: Space, VI: Index> {
-    Line(Line<VI>),
-    Arc(Arc<SPACE, VI>),
-    //Circle(Circle<SPACE>),
-    //CubicBezier-- or NURBS?
-    //OffsetCubicBezier-- or NURBS?
-}
-
-#[derive(Debug)]
-pub enum PatchTopologyError {
-    Empty,
-    Open,
-    Branching,
-}
-
-pub struct Interpolation<POINT, UV> {
-    pub points: Vec<POINT>,
-    pub uv: Vec<UV>,
-    pub edges: EdgeSet,
-}
-
-pub fn interpolate<
-    UV,
-    VC: VertexCollection,
-    EC: EdgeCollection<Space = VC::Space, VertexIndex = VC::Index>,
-    FC: FaceCollection<Space = VC::Space, EdgeIndex = EC::Index, VertexIndex = VC::Index>,
-    IntoUvFn: Fn(<VC::Space as Space>::Vector) -> UV,
->(
-    vertices: &VC,
-    edges: &EC,
-    faces: &FC,
-    into_uv: IntoUvFn,
-) -> Interpolation<<VC::Space as Space>::Vector, UV> {
-    // First, interpolate the boundaries of the faces
-    // and store their connectivity
-    let mut points = Vec::<<VC::Space as Space>::Vector>::new();
-    let mut polyedges = EdgeSet::new();
-
-    for face in faces.iter() {
-        for boundary in face.boundaries.iter() {
-            let start = points.len();
-            for &(edge_index, dir) in boundary.edges.iter() {
-                edges[edge_index].interpolate(vertices, dir, &mut points);
-            }
-            let end = points.len();
-            polyedges.insert_loop(start..end);
-        }
-    }
-
-    // Now, re-interpret those boundary points into (U, V) coordinates.
-    let uv: Vec<_> = points.iter().cloned().map(into_uv).collect();
-
-    Interpolation {
-        points,
-        uv,
-        edges: polyedges,
-    }
-}
-
-struct Space2D;
-impl Space for Space2D {
-    type Scalar = f32;
-    type AntiScalar = AntiScalar<f32>;
-    type Vector = Vector<f32>;
-    type AxisOfRotation = Vector<f32>;
-    type AntiEven = AntiEven<f32>;
-}
-
-#[derive(Clone)]
-struct VecVertex(Vec<Vector<f32>>);
-
-impl StdIndex<usize> for VecVertex {
-    type Output = Vector<f32>;
-
-    fn index(&self, idx: usize) -> &Vector<f32> {
-        self.0.index(idx)
-    }
-}
-
-impl VertexCollection for VecVertex {
-    type Space = Space2D;
-    type Index = usize;
-}
-
-struct VecEdge(Vec<Edge<Space2D, usize>>);
-
-impl StdIndex<usize> for VecEdge {
-    type Output = Edge<Space2D, usize>;
-
-    fn index(&self, idx: usize) -> &Edge<Space2D, usize> {
-        self.0.index(idx)
-    }
-}
-
-impl EdgeCollection for VecEdge {
-    type Space = Space2D;
-    type Index = usize;
-    type VertexIndex = usize;
-
-    fn iter(&self) -> impl Iterator<Item = &Edge<Space2D, usize>> {
-        self.0.iter()
-    }
-    //fn iter_outgoing(&self, vi: usize) -> impl Iterator<Item = &Edge<Space2D, usize>> {
-    //    self.0.iter().filter(move |e| e.start == vi)
-    //}
-}
-
-struct VecFace(Vec<Face<usize>>);
-
-impl FaceCollection for VecFace {
-    type Space = Space2D;
-    type Index = usize;
-    type EdgeIndex = usize;
-    type VertexIndex = usize;
-
-    fn iter(&self) -> impl Iterator<Item = &Face<usize>> {
-        self.0.iter()
-    }
-    //fn iter_outgoing(&self, vi: usize) -> impl Iterator<Item = &Edge<Space2D, usize>> {
-    //    self.0.iter().filter(move |e| e.start == vi)
-    //}
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ShaderVertex {
+    position: [f32; 2],
+    color: [f32; 3],
 }
 
 fn main() {
@@ -312,7 +18,12 @@ fn main() {
     let vertices = VecVertex(vec![
         Vector::point([0., 0.]),
         Vector::point([1., 0.]),
+        Vector::point([1., 1.]),
         Vector::point([0., 1.]),
+        Vector::point([0.4, 0.4]),
+        Vector::point([0.4, 0.6]),
+        Vector::point([0.6, 0.6]),
+        Vector::point([0.6, 0.4]),
     ]);
 
     let edges = VecEdge(vec![
@@ -320,29 +31,275 @@ fn main() {
         Edge::Arc(Arc {
             start: 1,
             axis: Vector::point([0., 0.]),
-            end_angle: std::f32::consts::TAU / 8.,
-            end: 2,
+            end_angle: std::f32::consts::TAU / 4.,
+            end: 3,
         }),
-        //Edge::Line(Line { start: 1, end: 2 }),
-        Edge::Line(Line { start: 2, end: 3 }),
+        //Edge::Line(Line { start: 1, end: 3 }),
+        Edge::Line(Line { start: 3, end: 0 }),
+        // interior hole
+        Edge::Line(Line { start: 4, end: 5 }),
+        Edge::Line(Line { start: 5, end: 6 }),
+        Edge::Line(Line { start: 6, end: 7 }),
+        Edge::Line(Line { start: 7, end: 4 }),
     ]);
 
-    let boundary = FaceBoundary {
+    let outside_boundary = FaceBoundary {
         edges: vec![(0, Dir::Fwd), (1, Dir::Fwd), (2, Dir::Fwd)],
+    };
+    let hole = FaceBoundary {
+        edges: vec![(3, Dir::Fwd), (4, Dir::Fwd), (5, Dir::Fwd), (6, Dir::Fwd)],
     };
 
     let faces = VecFace(vec![Face {
-        boundaries: vec![boundary],
+        boundaries: vec![outside_boundary, hole],
     }]);
 
-    let Interpolation {
-        points: _,
-        uv,
-        edges,
-    } = interpolate(&vertices, &edges, &faces, |pt| pt);
+    let Interpolation { points, uv, edges } = interpolate(&vertices, &edges, &faces, |pt| pt);
 
     let triangles = triangulate(&uv, edges).unwrap();
     println!("{:?}", triangles);
-    //triangulate::<Space2D, _, _, _, _>(&vertices, &edges, &faces, |pt| pt);
-    //println!("{:?}", triangulate(&vertices, &edges, &faces).unwrap());
+
+    let vertices: Vec<_> = points
+        .into_iter()
+        .map(|vector| {
+            let vector = vector.unitized();
+            ShaderVertex {
+                position: [vector.x, vector.y],
+                color: [1., 1., 1.],
+            }
+        })
+        .collect();
+
+    // Flatten indices and convert to u32
+    let indices: Vec<_> = triangles
+        .into_iter()
+        .flat_map(|[a, b, c]| [a as u32, b as u32, c as u32])
+        .collect();
+
+    // WGPU
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        #[cfg(not(target_arch = "wasm32"))]
+        backends: wgpu::Backends::PRIMARY,
+        #[cfg(target_arch = "wasm32")]
+        backends: wgpu::Backends::GL,
+        ..Default::default()
+    });
+
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
+        .block_on()
+        .unwrap();
+
+    let (device, queue) = adapter
+        .request_device(&Default::default(), None)
+        .block_on()
+        .unwrap();
+
+    let texture_size = 256u32;
+
+    let texture_desc = wgpu::TextureDescriptor {
+        size: wgpu::Extent3d {
+            width: texture_size,
+            height: texture_size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        label: None,
+        view_formats: &[],
+    };
+    let texture = device.create_texture(&texture_desc);
+    let texture_view = texture.create_view(&Default::default());
+
+    // we need to store this for later
+    let u32_size = std::mem::size_of::<u32>() as u32;
+
+    let output_buffer_size = (u32_size * texture_size * texture_size) as wgpu::BufferAddress;
+    let output_buffer_desc = wgpu::BufferDescriptor {
+        size: output_buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST
+            // this tells wpgu that we want to read this buffer from the cpu
+            | wgpu::BufferUsages::MAP_READ,
+        label: None,
+        mapped_at_creation: false,
+    };
+    let output_buffer = device.create_buffer(&output_buffer_desc);
+
+    let shader_src = "
+        // Vertex shader
+
+        struct VertexInput {
+            @location(0) position: vec2<f32>,
+            @location(1) color: vec3<f32>,
+        };
+
+        struct VertexOutput {
+            @builtin(position) clip_position: vec4<f32>,
+            @location(0) color: vec3<f32>,
+        };
+
+        @vertex
+        fn vs_main(
+            model: VertexInput,
+        ) -> VertexOutput {
+            var out: VertexOutput;
+            out.color = model.color;
+            out.clip_position = vec4<f32>(model.position, 0., 1.);
+            return out;
+        }
+
+        // Fragment shader
+
+        @fragment
+        fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+            return vec4<f32>(in.color, 1.0);
+        }
+    ";
+
+    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_src.into()),
+    });
+
+    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Render Pipeline Layout"),
+        bind_group_layouts: &[],
+        push_constant_ranges: &[],
+    });
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Vertex Buffer"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Index Buffer"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Render Pipeline"),
+        layout: Some(&render_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader_module,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<ShaderVertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x3],
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader_module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: texture_desc.format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    });
+
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.,
+                        g: 0.,
+                        b: 0.,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        render_pass.set_pipeline(&render_pipeline);
+        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+    }
+
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            aspect: wgpu::TextureAspect::All,
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &output_buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(u32_size * texture_size),
+                rows_per_image: Some(texture_size),
+            },
+        },
+        texture_desc.size,
+    );
+
+    queue.submit(Some(encoder.finish()));
+
+    // We need to scope the mapping variables so that we can
+    // unmap the buffer
+    {
+        let buffer_slice = output_buffer.slice(..);
+
+        // NOTE: We have to create the mapping THEN device.poll() before await
+        // the future. Otherwise the application will freeze.
+        let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.receive().block_on().unwrap().unwrap();
+
+        let data = buffer_slice.get_mapped_range();
+
+        use image::{ImageBuffer, Rgba};
+        let buffer =
+            ImageBuffer::<Rgba<u8>, _>::from_raw(texture_size, texture_size, data).unwrap();
+        buffer.save("image.png").unwrap();
+    }
+    output_buffer.unmap();
 }
