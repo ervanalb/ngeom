@@ -38,7 +38,12 @@ pub trait Ring:
     }
 
     /// The multiplicative identity
-    fn one() -> Self;
+    fn one() -> Self {
+        Self::from_integer(1)
+    }
+
+    /// Construct an integer scalar
+    fn from_integer(i: isize) -> Self;
 }
 
 /// A scalar datatype which can represent fractional values such as ½.
@@ -56,23 +61,28 @@ pub trait Ring:
 ///
 /// `Rational` comes implemented for `f32` and `f64`.
 pub trait Rational: Ring {
+    /// Construct a rational scalar
+    /// from an integer numerator and integer denominator
+    fn from_fraction(numerator: isize, denominator: isize) -> Self;
+
     /// A scalar value that when multiplied by 2 equals [one](Ring::one)
-    fn one_half() -> Self;
+    fn one_half() -> Self {
+        Self::from_fraction(1, 2)
+    }
 
     /// A scalar value that when multiplied by 3 equals [one](Ring::one)
-    fn one_third() -> Self;
+    fn one_third() -> Self {
+        Self::from_fraction(1, 3)
+    }
 
     /// A scalar value that when multiplied by 4 equals [one](Ring::one)
     fn one_fourth() -> Self {
-        Self::one_half() * Self::one_half()
+        Self::from_fraction(1, 4)
     }
-
-    /// A scalar value that when multiplied by 5 equals [one](Ring::one)
-    fn one_fifth() -> Self;
 
     /// A scalar value that when multiplied by 6 equals [one](Ring::one)
     fn one_sixth() -> Self {
-        Self::one_half() * Self::one_third()
+        Self::from_fraction(1, 6)
     }
 }
 
@@ -209,7 +219,7 @@ pub trait Trig {
 ///     fn abs(self) -> R32 { R32(self.0.abs()) }
 /// }
 /// impl Ring for R32 {
-///     fn one() -> R32 { R32(1.) }
+///     fn from_integer(i: isize) -> R32 { R32(i as f32) }
 /// }
 /// impl Sqrt for R32 {
 ///     type Output = R32;
@@ -339,20 +349,14 @@ macro_rules! impl_for_float {
         }
 
         impl Ring for $type {
-            fn one() -> $type {
-                1.
+            fn from_integer(i: isize) -> $type {
+                i as $type
             }
         }
 
         impl Rational for $type {
-            fn one_half() -> $type {
-                1. / 2.
-            }
-            fn one_third() -> $type {
-                1. / 3.
-            }
-            fn one_fifth() -> $type {
-                1. / 5.
+            fn from_fraction(numerator: isize, denominator: isize) -> $type {
+                numerator as $type / denominator as $type
             }
         }
 
@@ -404,8 +408,8 @@ macro_rules! impl_for_int {
         }
 
         impl Ring for $type {
-            fn one() -> $type {
-                1
+            fn from_integer(i: isize) -> $type {
+                i.try_into().expect("Integer out of range")
             }
         }
     };
@@ -416,4 +420,3 @@ impl_for_int!(i16);
 impl_for_int!(i32);
 impl_for_int!(i64);
 impl_for_int!(i128);
-

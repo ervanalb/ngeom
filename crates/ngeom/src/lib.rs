@@ -170,5 +170,6 @@ pub mod ops;
 pub mod re2;
 pub mod re3;
 pub mod scalar;
+pub mod v2;
 
 mod test;
