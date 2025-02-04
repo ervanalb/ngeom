@@ -3,7 +3,7 @@
 //! Because geometric operations are generally done through various sums and products,
 //! the scalar datatype needs only be a [Ring] for most functionality to work.
 
-use core::ops::{Add, Mul, Neg, Sub};
+use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// A scalar datatype whose absolute value can be taken.
 pub trait Abs {
@@ -30,6 +30,9 @@ pub trait Ring:
     + Add<Self, Output = Self>
     + Mul<Self, Output = Self>
     + Sub<Self, Output = Self>
+    + AddAssign<Self>
+    + MulAssign<Self>
+    + SubAssign<Self>
     + Default
 {
     /// The additive identity
@@ -202,13 +205,22 @@ pub trait Trig {
 ///     type Output = R32;
 ///     fn add(self, r: R32) -> R32 { R32(self.0 + r.0) }
 /// }
+/// impl core::ops::AddAssign<R32> for R32 {
+///     fn add_assign(&mut self, r: R32) { self.0 += r.0; }
+/// }
 /// impl core::ops::Sub<R32> for R32 {
 ///     type Output = R32;
 ///     fn sub(self, r: R32) -> R32 { R32(self.0 - r.0) }
 /// }
+/// impl core::ops::SubAssign<R32> for R32 {
+///     fn sub_assign(&mut self, r: R32) { self.0 -= r.0; }
+/// }
 /// impl core::ops::Mul<R32> for R32 {
 ///     type Output = R32;
 ///     fn mul(self, r: R32) -> R32 { R32(self.0 * r.0) }
+/// }
+/// impl core::ops::MulAssign<R32> for R32 {
+///     fn mul_assign(&mut self, r: R32) { self.0 *= r.0; }
 /// }
 /// impl core::ops::Neg for R32 {
 ///     type Output = R32;
