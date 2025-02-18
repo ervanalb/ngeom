@@ -1338,6 +1338,15 @@ fn implement_geometric_algebra(
                 }).collect()
             };
 
+            let backing_scalar_code: TokenStream = {
+                let my_type_name = obj.type_name();
+                quote! {
+                    impl<T> BackingScalar for #my_type_name {
+                        type Scalar = T;
+                    }
+                }
+            };
+
             let obj_self_components = &obj.select_components(Ident::new("self", Span::call_site()), basis_element_count);
 
             // Add a method anti_abs() on the antiscalar
@@ -2220,6 +2229,7 @@ fn implement_geometric_algebra(
                 // ===========================================================================
 
                 #from_code
+                #backing_scalar_code
                 #anti_abs_code
                 #anti_recip_code
                 #anti_sqrt_code

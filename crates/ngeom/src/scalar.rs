@@ -339,6 +339,28 @@ pub trait AntiTrig {
     fn anti_sinc(self) -> Self::Output;
 }
 
+/// A trait for getting the backing scalar type of a given type.
+///
+/// This is useful for when the scalar type is needed by the type system:
+///
+/// ```
+/// use std::ops::Mul;
+/// use ngeom::scalar::*;
+///
+/// // Returns half of any object which can be halved
+/// fn half<X>(x: X) -> X
+/// where
+///     X: BackingScalar<Scalar: Rational> + Mul<<X as BackingScalar>::Scalar, Output = X>,
+/// {
+///     x * <X as BackingScalar>::Scalar::one_half()
+/// }
+/// ```
+///
+/// This trait will automatically be implemented for all multivector types.
+pub trait BackingScalar {
+    type Scalar;
+}
+
 macro_rules! impl_for_float {
     ($type:ident) => {
         #[cfg(feature = "std")]

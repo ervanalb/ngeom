@@ -259,11 +259,11 @@ pub trait Compose<T> {
 ///
 /// For example:
 /// * Given a line in 2D, get the ideal point orthogonal to the line
-///   (on the positive side according to the right-hand rule)
+///   (on the positive side according to the handedness of the space)
 /// * Given a plane in 3D, get the ideal point orthogonal to the plane
-///   (on the positive side according to the right-hand rule)
+///   (on the positive side according to the handedness of the space)
 /// * Given a line in 3D, get the ideal line orthogonal to it
-///   (wrapping in the positive direction according to the right hand rule)
+///   (wrapping in the positive direction according to the handedness of the space)
 pub trait Normal {
     type Output;
     fn normal(self) -> Self::Output;
@@ -538,10 +538,15 @@ pub trait IdealPoint<C> {
 }
 
 /// Constructor for a rotor about an axis by twice its weight
-pub trait Rotor<AXIS: Copy>: Sized
+pub trait Rotor<AXIS>: Sized {
+    fn rotor(axis: AXIS) -> Self;
+}
+
+impl<AXIS, T: Sized> Rotor<AXIS> for T
 where
-    Self: IdentityTransformation,
-    AXIS: WeightNorm<Output: AntiTrig + Copy>
+    T: IdentityTransformation,
+    AXIS: Copy
+        + WeightNorm<Output: AntiTrig + Copy>
         + AntiMul<
             <<AXIS as WeightNorm>::Output as AntiTrig>::Output,
             Output: core::ops::Add<
@@ -550,22 +555,26 @@ where
             >,
         >,
 {
-    /// Construct a rotor about the given axis by twice its weight
     fn rotor(axis: AXIS) -> Self {
         let half_phi = axis.weight_norm();
         axis.anti_mul(half_phi.anti_sinc()) + half_phi.anti_cos()
     }
 }
 
+pub trait AxisAngle<AXIS, ANGLE>: Sized {
+    /// Construct a rotor given a unitized axis and scalar angle
+    fn axis_angle(axis: AXIS, phi: ANGLE) -> Self;
+}
+
 /// Constructor for a rotor given a unitized axis and scalar angle
-pub trait AxisAngle<AXIS: Copy, ANGLE: Ring + Rational + Trig>: Sized
+impl<AXIS, ANGLE, T: Sized> AxisAngle<AXIS, ANGLE> for T
 where
     Self: IdentityTransformation
         + core::ops::Mul<<ANGLE as Trig>::Output, Output = Self>
         + core::ops::Add<AXIS, Output = Self>,
-    AXIS: core::ops::Mul<<ANGLE as Trig>::Output, Output = AXIS>,
+    AXIS: Copy + core::ops::Mul<<ANGLE as Trig>::Output, Output = AXIS>,
+    ANGLE: Ring + Rational + Trig,
 {
-    /// Construct a rotor given a unitized axis and scalar angle
     fn axis_angle(axis: AXIS, phi: ANGLE) -> Self {
         let half_phi = phi * ANGLE::one_half();
         Self::identity_transformation() * half_phi.cos() + axis * half_phi.sin()
@@ -573,23 +582,87 @@ where
 }
 
 /// Constructor for a translator
-pub trait Translator<SCALAR, VECTOR>: Sized
+pub trait Translator<VECTOR>: Sized {
+    /// Translator towards ideal point p by its magnitude
+    fn translator(direction: VECTOR) -> Self;
+}
+
+impl<VECTOR, SCALAR, T: Sized> Translator<VECTOR> for T
 where
     SCALAR: Ring + Rational,
-    VECTOR: Origin + Wedge<VECTOR, Output: WeightDual<Output: core::ops::Mul<SCALAR>>>,
+    VECTOR: Origin + Wedge<VECTOR, Output: WeightDual<Output: BackingScalar<Scalar=SCALAR> + core::ops::Mul<SCALAR>>>,
     Self: IdentityTransformation
         + core::ops::Add<<<<VECTOR as Wedge<VECTOR>>::Output as WeightDual>::Output as core::ops::Mul<SCALAR>>::Output, Output=Self>,
 {
-    /// Translator towards ideal point p by its magnitude
     fn translator(direction: VECTOR) -> Self {
         Self::identity_transformation()
             + VECTOR::origin().wedge(direction).weight_dual() * SCALAR::one_half()
     }
 }
 
+/// Get the (signed) angle between two unitized elements
+///
+/// Rather than actually performing any inverse trig, this trait will return the values of sine and cosine,
+/// which can be fed into `atan2` if desired.
+///
+/// This can find the angle between:
+/// * Lines in 2D (signed angle)
+/// * Planes in 3D (signed angle)
+/// * A line and a plane in 3D (TODO: is it signed?)
+/// * Skew lines in 3D (TODO: is it signed?)
+pub trait AngleTo<E: Copy>:
+    Sized + Copy + WeightContraction<E, Output: BulkNorm> + AntiCommutator<E, Output: WeightNorm>
+{
+    /// Get the cosine of the angle between this element and the given element
+    /// as a scalar
+    fn cos_angle_to(self, other: E)
+        -> <<Self as WeightContraction<E>>::Output as BulkNorm>::Output;
+
+    /// Get the sine of the angle between this element and the given element
+    /// as an antiscalar (convert to a scalar using `.into()`)
+    fn sin_angle_to(self, other: E) -> <<Self as AntiCommutator<E>>::Output as WeightNorm>::Output;
+
+    /// Convenience method wrapping `cos_angle_to()` and `sin_angle_to()`
+    /// Gets both the cosine and sine of the angle between this element and the given element,
+    /// as a tuple `(cos, sin)`
+    fn cos_sin_angle_to(
+        self,
+        other: E,
+    ) -> (
+        <<Self as WeightContraction<E>>::Output as BulkNorm>::Output,
+        <<Self as AntiCommutator<E>>::Output as WeightNorm>::Output,
+    ) {
+        (self.cos_angle_to(other), self.sin_angle_to(other))
+    }
+}
+
+impl<E, T> AngleTo<E> for T
+where
+    T: Sized
+        + Copy
+        + WeightContraction<E, Output: BulkNorm>
+        + AntiCommutator<E, Output: WeightNorm>,
+    E: Copy,
+{
+    fn cos_angle_to(
+        self,
+        other: E,
+    ) -> <<Self as WeightContraction<E>>::Output as BulkNorm>::Output {
+        self.weight_contraction(other).bulk_norm()
+    }
+
+    fn sin_angle_to(self, other: E) -> <<Self as AntiCommutator<E>>::Output as WeightNorm>::Output {
+        self.anti_commutator(other).weight_norm()
+    }
+}
+
 #[macro_export]
 macro_rules! impl_ops_for_scalar {
     ($type:ident) => {
+        impl BackingScalar for $type {
+            type Scalar = $type;
+        }
+
         impl BulkNormSquared for $type {
             type Output = $type;
             fn bulk_norm_squared(self) -> $type {

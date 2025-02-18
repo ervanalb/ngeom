@@ -423,12 +423,3 @@ impl<T: Ring> IdealPoint<[T; 3]> for Vector<T> {
         }
     }
 }
-
-impl<T: Ring + Sqrt<Output = T> + Trig<Output = T>> Rotor<Bivector<T>> for AntiEven<T> {}
-
-impl<A: Rational + Trig<Output: Ring>> AxisAngle<Bivector<<A as Trig>::Output>, A>
-    for AntiEven<<A as Trig>::Output>
-{
-}
-
-impl<T: Ring + Rational> Translator<T, Vector<T>> for AntiEven<T> {}

@@ -568,49 +568,69 @@ fn test_linear_operator_rotation() {
     assert_close!(l.transform(motor), l.transform(matrix));
 }
 
-/*
 #[test]
 fn test_angle() {
     // Angle between lines in 2D
-    assert_close!(
-        angle(
-            re2::Vector::<f32>::origin().vee(re2::Vector::point([0., 5.])),
-            re2::Vector::origin().vee(re2::Vector::point([-10., 10.]))
-        ),
-        0.125 * core::f32::consts::TAU,
-    );
+    let l1 = re2::Vector::<f32>::origin()
+        .join(re2::Vector::point([0., 5.]))
+        .unitized();
+    let l2 = re2::Vector::origin()
+        .join(re2::Vector::point([-10., 10.]))
+        .unitized();
+
+    let (cos, sin) = l1.cos_sin_angle_to(l2);
+
+    let expected_angle = 0.125 * core::f32::consts::TAU;
+    assert_close!(cos, expected_angle.cos());
+    assert_close!(sin, expected_angle.sin().into());
 
     // Angle between planes in 3D
-    assert_close!(
-        angle(
-            re3::Vector::<f32>::origin()
-                .vee(re3::Vector::point([0., 0., 1.]))
-                .vee(re3::Vector::point([0., 5., 0.])),
-            re3::Vector::origin()
-                .vee(re3::Vector::point([0., 0., 1.]))
-                .vee(re3::Vector::point([-10., 10., 0.]))
-        ),
-        0.125 * core::f32::consts::TAU,
-    );
+    let p1 = re3::Vector::<f32>::origin()
+        .join(re3::Vector::point([0., 0., 1.]))
+        .join(re3::Vector::point([0., 5., 0.]))
+        .unitized();
+    let p2 = re3::Vector::origin()
+        .join(re3::Vector::point([0., 0., 1.]))
+        .join(re3::Vector::point([-10., 10., 0.]))
+        .unitized();
 
-    {
-        // Angle between line and plane
-        let pl = re3::Vector::<f32>::origin()
-            .vee(re3::Vector::point([1., 0., 0.]))
-            .vee(re3::Vector::point([0., 1., 0.]))
-            .hat();
-        let l = re3::Vector::point([10., 10., 0.])
-            .vee(re3::Vector::point([10., 20., 10.]))
-            .hat();
+    let (cos, sin) = p1.cos_sin_angle_to(p2);
 
-        // TODO sign is wrong here, why?
-        assert_close!(
-            pl.join(l).norm().atan2(pl.dot(l).norm()),
-            0.125 * core::f32::consts::TAU,
-        )
-    }
+    let expected_angle = 0.125 * core::f32::consts::TAU;
+    assert_close!(cos, expected_angle.cos());
+    assert_close!(sin, expected_angle.sin().into());
+
+    // Angle between plane and line
+    let pl = re3::Vector::<f32>::origin()
+        .join(re3::Vector::point([1., 0., 0.]))
+        .join(re3::Vector::point([0., 1., 0.]))
+        .unitized();
+    let l = re3::Vector::point([10., 10., 0.])
+        .join(re3::Vector::point([10., 20., 10.]))
+        .unitized();
+
+    let (cos, sin) = pl.cos_sin_angle_to(l);
+
+    let expected_angle = 0.125 * core::f32::consts::TAU;
+    assert_close!(cos, expected_angle.cos());
+    assert_close!(sin, expected_angle.sin().into());
+
+    // Angle between skew lines
+    let l1 = re3::Vector::<f32>::origin()
+        .join(re3::Vector::point([0., 0., 10.]))
+        .unitized();
+    let l2 = re3::Vector::point([10., 0., 0.])
+        .join(re3::Vector::point([10., 5., 5.]))
+        .unitized();
+
+    let (cos, sin) = l1.cos_sin_angle_to(l2);
+
+    let expected_angle = 0.125 * core::f32::consts::TAU;
+    assert_close!(cos, expected_angle.cos());
+    assert_close!(sin, expected_angle.sin().into());
 }
 
+/*
 #[test]
 fn motor() {
     // 2D translation
